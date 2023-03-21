@@ -4,7 +4,10 @@ import glob
 
 class IC15_Converter(object):
     '''
-    Format annotation to standard form for ic15 dataset. 
+    Format annotation to standard form for IC15 dataset. 
+    self._format_det_label transforms the annotations into a single det label file with a format like:
+    img_10.jpg	[{"transcription": "Please", "points": [[27, 17], [103, 22], [106, 47], [30, 45]]}, ...}].
+    The `points` are the coordinates of the four vertices of the text box in clockwise order.
     '''
     def __init__(self, path_mode='relative'):
         self.path_mode = path_mode

@@ -1,9 +1,10 @@
 from .fpn import FPN, DBFPN
 from .rnn import RNNEncoder
 from .select import Select
+from.deformable_transformer import TESTRDeformableTransformer
 
 __all__ = ['build_neck']
-supported_necks = ['FPN', 'DBFPN', 'RNNEncoder', 'Select']
+supported_necks = ['FPN', 'DBFPN', 'RNNEncoder', 'Select', 'TESTRDeformableTransformer']
 
 
 def build_neck(neck_name, **kwargs):

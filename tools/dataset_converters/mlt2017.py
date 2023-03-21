@@ -62,7 +62,7 @@ class MLT2017_Converter(object):
                 bezier = annot['bezier_pts']
                 transcription = self._decode_rec_ids_to_string(annot['rec']) # needs to translate from character ids to characters.
                 images_labels[img_path].append(
-                    {"transcription":transcription, "points": bbox, "bezier":bezier}
+                    {"transcription":transcription, "points": bbox, "beziers":bezier}
                 )
             for img_path in images_labels: 
                 annotations = []

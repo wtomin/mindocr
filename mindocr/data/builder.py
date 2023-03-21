@@ -14,12 +14,7 @@ supported_dataset_types = ['BaseDataset', 'DetDataset', 'RecDataset', 'LMDBDatas
 
 def build_dataset(
         dataset_config: dict,
-        loader_config: dict,
-        num_shards=None,
-        shard_id=None,
-        is_train=True,
-        **kwargs,
-        ):
+        is_train=True):
     '''
     Build dataset for training and evaluation.
 
@@ -34,6 +29,35 @@ def build_dataset(
             - transform_pipeline (list[dict]): each element corresponds to a transform operation on image and/or label
             - output_columns (list[str]): list of output features for each sample.
             - num_columns_to_net (int): num inputs for network forward func in output_columns
+    '''
+    # Check dataset paths (dataset_root, data_dir, and label_file) and update to absolute format
+    dataset_config = _check_dataset_paths(dataset_config)
+    dataset_config = dataset_config.copy()
+    # 1. create source dataset (GeneratorDataset)
+    ## Invoke dataset class
+    dataset_class_name = dataset_config.pop('type')
+    assert dataset_class_name in supported_dataset_types, "Invalid dataset name"
+    dataset_class = eval(dataset_class_name)
+    dataset_args = dict(is_train=is_train, **dataset_config)
+    dataset = dataset_class(**dataset_args)
+
+    dataset_column_names = dataset.get_output_columns()
+    print('==> Dataset output columns: \n\t', dataset_column_names)
+    return dataset
+
+
+def build_dataloader(
+        dataset_config: dict,
+        loader_config: dict,
+        num_shards=None,
+        shard_id=None,
+        is_train=True,
+        **kwargs,
+        ):
+    '''
+    Build dataset for training and evaluation.
+
+    Args:
         loader_config (dict): dataloader configuration containing keys:
             - batch_size (int): batch size for data loader
             - drop_remainder (boolean): whether to drop the data in the last batch when the total of data can not be divided by the batch_size
@@ -78,11 +102,10 @@ def build_dataset(
         >>>     "num_columns_to_net": 1
         >>> }
         >>> loader_config = dict(shuffle=True, batch_size=16, drop_remainder=False, num_workers=1)
-        >>> data_loader = build_dataset(data_config, loader_config, num_shards=1, shard_id=0, is_train=True)
+        >>> data_loader = build_dataloader(data_config, loader_config, num_shards=1, shard_id=0, is_train=True)
     '''
-    # Check dataset paths (dataset_root, data_dir, and label_file) and update to absolute format
-    dataset_config = _check_dataset_paths(dataset_config)
-
+    dataset = build_dataset(dataset_config, is_train=is_train)
+    dataset_column_names = dataset.get_output_columns()
     # Set default multiprocessing params for data pipeline
     ## num_parallel_workers: Number of subprocesses used to fetch the dataset, transform data, or load batch in parallel
     num_workers = loader_config.get("num_workers", 8)
@@ -99,17 +122,6 @@ def build_dataset(
     # auto tune num_workers, prefetch. (This conflicts the profiler)
     #ms.dataset.config.set_autotune_interval(5)
     #ms.dataset.config.set_enable_autotune(True, "./dataproc_autotune_out")
-
-    # 1. create source dataset (GeneratorDataset)
-    ## Invoke dataset class
-    dataset_class_name = dataset_config.pop('type')
-    assert dataset_class_name in supported_dataset_types, "Invalid dataset name"
-    dataset_class = eval(dataset_class_name)
-    dataset_args = dict(is_train=is_train, **dataset_config)
-    dataset = dataset_class(**dataset_args)
-
-    dataset_column_names = dataset.get_output_columns()
-    print('==> Dataset output columns: \n\t', dataset_column_names)
 
     # TODO: find optimal setting automatically according to num of CPU cores
     num_workers = loader_config.get("num_workers", 8) # Number of subprocesses used to fetch the dataset/map data row/gen batch in parallel
@@ -151,15 +163,27 @@ def build_dataset(
     drop_remainder = loader_config.get('drop_remainder', is_train)
     if is_train and drop_remainder == False:
         print('WARNING: drop_remainder should be True for training, otherwise the last batch may lead to training fail.')
+    
+    output_columns, per_batch_map= None, None
+    input_columns = None
+
+    if 'per_batch_map' in kwargs:
+        per_batch_map = kwargs['per_batch_map']
+    if 'input_columns' in kwargs:
+        input_columns = kwargs['input_columns']
+    if 'output_columns' in kwargs:
+        output_columns = kwargs['output_columns']
+
     dataloader = ds.batch(
                     batch_size,
                     drop_remainder=drop_remainder,
                     num_parallel_workers=min(num_workers, 2), # set small workers for lite computation. TODO: increase for batch-wise mapping
-                    #input_columns=input_columns,
-                    #output_columns=batch_column,
-                    #per_batch_map=per_batch_map, # uncommet to use inner-batch transformation
+                    input_columns=input_columns,
+                    output_columns=output_columns,
+                    per_batch_map=per_batch_map, # uncommet to use inner-batch transformation
                     )
-
+    if output_columns is not None and output_columns != dataset_column_names:
+        print('==> DataLoader output columns: \n\t', output_columns)
     return dataloader
 
 def _check_dataset_paths(dataset_config):

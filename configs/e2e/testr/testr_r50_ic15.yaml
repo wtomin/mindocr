@@ -1,0 +1,25 @@
+_base_: "base_testr_poly.yaml"
+
+train:
+  dataset_sink_mode: True 
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: icdar2015/train_images
+    label_file: icdar2015/train_det_gt.txt
+    sample_ratio: [ 1.0 ]
+  loader:
+    shuffle: True # TODO: tbc
+    batch_size: 10
+    drop_remainder: True
+    max_rowsize: 32
+    num_workers: 1 # TODO: may lead to OOM
+
+eval:
+  dataset_sink_mode: False
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: icdar2015/test_images
+    label_file:  icdar2015/test_det_gt.txt
+    sample_ratio: [ 1.0 ]

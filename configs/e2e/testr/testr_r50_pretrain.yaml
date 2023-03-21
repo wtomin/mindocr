@@ -1,0 +1,25 @@
+_base_: "base_testr_poly.yaml"
+
+train:
+  dataset_sink_mode: True 
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: [syntext1/images, syntext2/images, totaltext/train_images, mlt2017/images/MLT_train_images]
+    label_file: [syntext1/train_det_gt.txt, syntext2/train_det_gt.txt, totaltext/train_det_gt.txt, mlt2017/train_det_gt.txt ]
+    sample_ratio: [ 1.0, 1.0, 1.0, 1.0 ]
+  loader:
+    shuffle: False # TODO: tbc
+    batch_size: 8
+    drop_remainder: True
+    max_rowsize: 32
+    num_workers: 1 # TODO: may lead to OOM
+
+eval:
+  dataset_sink_mode: False
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: totaltext/test_images
+    label_file:  totaltext/test_det_gt.txt
+    sample_ratio: [ 1.0 ]

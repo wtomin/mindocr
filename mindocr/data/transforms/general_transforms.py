@@ -3,11 +3,14 @@ import cv2
 import numpy as np
 from PIL import Image
 from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust
-
-from ...data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from mindspore.dataset.vision import Rotate, HorizontalFlip, VerticalFlip
+#RandomHorizontalFlipWithBBox, RandomVerticalFlipWithBBox, 
+import random
+from ..data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 
 __all__ = ['DecodeImage', 'NormalizeImage', 'ToCHWImage', 'PackLoaderInputs', 'ScalePadImage', 'GridResize',
-           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust']
+           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust', 'RandomFlipWithBBox', 'ResizeShortestEdgeWithBBox', 
+           'RandomRotationWithBBox']
 
 
 # TODO: use mindspore C.decode for efficiency
@@ -221,29 +224,38 @@ class RandomCropWithBBox:
         min_crop_ratio: minimum size of a crop in respect to an input image size.
         crop_size: target size of the crop (resized and padded, if needed), preserves sides ratio.
     """
-    def __init__(self, max_tries=10, min_crop_ratio=0.1, crop_size=(640, 640)):
+    def __init__(self, max_tries=10, min_crop_ratio=0.1, pad_if_needed=True, crop_size=(640, 640)):
+        """
+        Args:
+            crop_size: target size of the crop (padded, if needed)
+            pad_if_needed: if True, pads the image to the target size, otherwise keep the crop size.
+        """
         self._crop_size = crop_size
+        self._pad_if_needed = pad_if_needed
         self._ratio = min_crop_ratio
         self._max_tries = max_tries
 
     def __call__(self, data):
         start, end = self._find_crop(data)
-        scale = min(self._crop_size / (end - start))
-
-        data['image'] = cv2.resize(data['image'][start[0]: end[0], start[1]: end[1]], None, fx=scale, fy=scale)
-        data['image'] = np.pad(data['image'],
+        if self._pad_if_needed:
+            scale = min(self._crop_size / (end - start))
+            data['image'] = cv2.resize(data['image'][start[0]: end[0], start[1]: end[1]], None, fx=scale, fy=scale)
+            data['image'] = np.pad(data['image'],
                                (*tuple((0, cs - ds) for cs, ds in zip(self._crop_size, data['image'].shape[:2])), (0, 0)))
-
+            
+        else:
+            data['image'] = data['image'][start[0]: end[0], start[1]: end[1]]
+            scale = 1
         start, end = start[::-1], end[::-1]     # convert to x, y coord
         new_polys, new_texts, new_ignores = [], [], []
         for _id in range(len(data['polys'])):
             # if the polygon is within the crop
-            if (data['polys'][_id].max(axis=0) > start).all() and (data['polys'][_id].min(axis=0) < end).all():   # NOQA
+            if (data['polys'][_id].min(axis=0) > start).all() and (data['polys'][_id].max(axis=0) < end).all():   # NOQA
                 new_polys.append((data['polys'][_id] - start) * scale)
                 new_texts.append(data['texts'][_id])
                 new_ignores.append(data['ignore_tags'][_id])
 
-        data['polys'] = np.array(new_polys) if isinstance(data['polys'], np.ndarray) else new_polys
+        data['polys'] = np.array(new_polys).astype(np.int64) if isinstance(data['polys'], np.ndarray) else new_polys
         data['texts'] = new_texts
         data['ignore_tags'] = new_ignores
 
@@ -275,7 +287,7 @@ class RandomCropWithBBox:
 
                 # check that at least one polygon is within the crop
                 for poly in polys:
-                    if (poly.max(axis=0) > start[::-1]).all() and (poly.min(axis=0) < end[::-1]).all():     # NOQA
+                    if (poly.min(axis=0) > start[::-1]).all() and (poly.max(axis=0) < end[::-1]).all():     # NOQA
                         return start, end
 
         # failed to generate a crop or all polys are marked as ignored
@@ -292,4 +304,142 @@ class RandomColorAdjust:
         modified keys: image
         """
         data['image'] = self._jitter(data['image'])
+        return data
+
+class RandomFlipWithBBox:
+    def __init__(self, horizontal=True, vertical=False, prob=0.5):
+        self.horizontal = horizontal
+        self.h_flip = HorizontalFlip()
+        self.vertical = vertical 
+        self.v_flip = VerticalFlip()
+        self.prob = prob
+    def horizontal_flip_bbox(self, bbox, image_shape):
+        _,width = image_shape
+        bbox[:, :, 0] = width - bbox[:, :, 0]
+        return bbox
+    def vertical_flip_bbox(self, bbox, image_shape):
+        height,_ = image_shape
+        bbox[:, :, 1] = height - bbox[:, :, 1]
+        return bbox
+    def __call__(self, data: dict) -> dict:
+        image = data["image"]
+        bbox = data['polys']
+        p = np.random.uniform(0, 1)
+        if p<=self.prob:
+            if self.horizontal:
+                image = self.h_flip(image)
+                bbox = self.horizontal_flip_bbox(bbox, image.shape[:2])
+            if self.vertical:
+                image = self.v_flip(image)
+                bbox = self.vertical_flip_bbox(bbox, image.shape[:2])
+        data["image"] = image
+        data['polys'] = bbox
+        return data
+class ResizeShortestEdgeWithBBox(object):
+    def __init__(self, short_edge_length: List[int], max_size: int, sample_style: str):
+        """
+        Args:
+            short_edge_length (list[int]): list of possible shortest edge length
+            max_size (int): maximum allowed longest edge length
+            sample_style (str): "choice" or "range". If "choice", a length will be
+                randomly chosen from `short_edge_length`. If "range", a length will be
+                sampled from the range of min(short_edge_length) and max(short_edge_length).
+        """
+        if isinstance(short_edge_length, int):
+            short_edge_length = (short_edge_length, short_edge_length)
+        self.is_range = sample_style == "range" 
+        if self.is_range:
+            assert len(short_edge_length) == 2, (
+                "short_edge_length must be two values using 'range' sample style."
+                f" Got {short_edge_length}!"
+            )
+        self.short_edge_length = short_edge_length
+        self.max_size = max_size
+        self.sample_style = sample_style
+
+    def __call__(self, data):
+        h, w = data["image"].shape[:2]
+        if self.sample_style == "choice":
+            short_edge = random.choice(self.short_edge_length)
+        elif self.sample_style == "range":
+            short_edge = random.randint(
+                min(self.short_edge_length), max(self.short_edge_length)
+            )
+        else:
+            raise ValueError("Unknown sample style: {}".format(self.sample_style))
+
+        # Prevent the biggest axis from being more than max_size
+        scale = min(short_edge / min(h, w), self.max_size / max(h, w))
+        newh, neww = int(h * scale + 0.5), int(w * scale + 0.5)
+        data["image"] = cv2.resize(data["image"], (neww, newh))
+        data["polys"] = data["polys"] * scale
+        return data
+
+class RandomRotationWithBBox:
+    def __init__(self, angle, expand=True, center=None, sample_style="range", interp=None):
+        """
+        Args:
+            angle (list[float]): If ``sample_style=="range"``,
+                a [min, max] interval from which to sample the angle (in degrees).
+                If ``sample_style=="choice"``, a list of angles to sample from
+            expand (bool): choose if the image should be resized to fit the whole
+                rotated image (default), or simply cropped
+            center (list[[float, float]]):  If ``sample_style=="range"``,
+                a [[minx, miny], [maxx, maxy]] relative interval from which to sample the center,
+                [0, 0] being the top left of the image and [1, 1] the bottom right.
+                If ``sample_style=="choice"``, a list of centers to sample from
+                Default: None, which means that the center of rotation is the center of the image
+                center has no effect if expand=True because it only affects shifting
+        """
+        assert sample_style in ["range", "choice"], sample_style
+        self.is_range = sample_style == "range"
+        if isinstance(angle, (float, int)):
+            angle = (angle, angle)
+        if center is not None and isinstance(center[0], (float, int)):
+            center = (center, center)
+        self.angle = angle
+        self.center = center
+        self.expand = expand
+        self.interp = interp
+
+    def rotate_bbox(self, bbox, angle, center):
+        cx, cy = center
+        # translate the bounding box to center at origin
+        translated_bbox = bbox - np.array([cx, cy])
+        # rotate the bounding box
+        theta = np.radians(angle)
+        rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
+                                    [np.sin(theta), np.cos(theta)]])
+        rotated_bbox = np.dot(translated_bbox, rotation_matrix)
+        rotated_bbox = rotated_bbox + np.array([cx, cy])
+        return rotated_bbox
+    def __call__(self, data):
+        image = data["image"]
+        h, w = image.shape[:2]
+        bbox = data['polys']
+        if self.is_range:
+            angle = random.uniform(self.angle[0], self.angle[1])
+        else:
+            angle = random.choice(self.angle)
+        if self.center is not None:
+            if self.is_range:
+                center = (
+                    np.random.uniform(self.center[0][0], self.center[1][0]),
+                    np.random.uniform(self.center[0][1], self.center[1][1]),
+                )
+            else:
+                center = random.choice(self.center)
+        else:
+            center = None
+        if center is not None:
+            center = (center[0] * w, center[1] * h) # Convert to absolute coordinates
+        else:
+            center = (0.5 * w, 0.5 * h)
+        if angle%360==0:
+            return data
+        image = Rotate(angle, expand=self.expand, center=center)(image)
+        bbox = self.rotate_bbox(bbox, angle, center)
+
+        data["image"] = image
+        data['polys'] = bbox.astype(np.int64)
         return data

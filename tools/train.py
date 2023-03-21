@@ -25,7 +25,7 @@ from mindspore.train import LossMonitor, TimeMonitor
 from mindocr.optim import create_optimizer, create_group_params # adopted from mindcv
 from mindocr.scheduler import create_scheduler # adopted from mindcv
 
-from mindocr.data import build_dataset
+from mindocr.data import build_dataloader
 from mindocr.models import build_model
 from mindocr.losses import build_loss
 from mindocr.postprocess import build_postprocess
@@ -58,7 +58,7 @@ def main(cfg):
     is_main_device = rank_id in [None, 0]
 
     # create dataset
-    loader_train = build_dataset(
+    loader_train = build_dataloader(
             cfg.train.dataset,
             cfg.train.loader,
             num_shards=device_num,
@@ -69,7 +69,7 @@ def main(cfg):
 
     loader_eval = None
     if cfg.system.val_while_train:
-        loader_eval = build_dataset(
+        loader_eval = build_dataloader(
             cfg.eval.dataset,
             cfg.eval.loader,
             num_shards=device_num,

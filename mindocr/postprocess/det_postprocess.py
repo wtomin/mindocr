@@ -1,11 +1,45 @@
 import cv2
 import numpy as np
+import mindspore.numpy as mnp
 from shapely.geometry import Polygon
 
 from ..data.transforms.det_transforms import expand_poly
 
-__all__ = ['DBPostprocess']
+__all__ = ['DBPostprocess', 'TESTRPostprocess']
 
+class TESTRPostprocess:
+    def __init__(self) -> None:
+        pass
+    @classmethod
+    def detector_postprocess(results, output_height, output_width, mask_threshold=0.5):
+        """
+        In addition to the post processing of detectron2, we add scalign for
+        bezier control points.
+        """
+        scale_x, scale_y = (output_width / results['image_size'][1], output_height / results['image_size'][0])
+
+        # scale bezier points
+        if 'beziers' in results:
+            beziers = results['beziers']
+            # scale and clip in place
+            h, w = results['image_size']
+            mnp.clip(beziers[:, 0], 0, w, out=beziers[:, 0])
+            mnp.clip(beziers[:, 1], 0, h, out=beziers[:, 1])
+            mnp.clip(beziers[:, 6], 0, w, out=beziers[:, 6])
+            mnp.clip(beziers[:, 7], 0, h, out=beziers[:, 7])
+            mnp.clip(beziers[:, 8], 0, w, out=beziers[:, 8])
+            mnp.clip(beziers[:, 9], 0, h, out=beziers[:, 9])
+            mnp.clip(beziers[:, 14], 0, w, out=beziers[:, 14])
+            mnp.clip(beziers[:, 15], 0, h, out=beziers[:, 15])
+            beziers[:, 0::2] *= scale_x
+            beziers[:, 1::2] *= scale_y
+
+        if 'polygons' in results:
+            polygons = results['polygons']
+            polygons[:, 0::2] *= scale_x
+            polygons[:, 1::2] *= scale_y
+
+        return results
 
 class DBPostprocess:
     def __init__(self, binary_thresh=0.3, box_thresh=0.7, max_candidates=1000, expand_ratio=1.5,

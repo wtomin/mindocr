@@ -90,7 +90,7 @@ class DetDataset(BaseDataset):
 
 
     def __getitem__(self, index):
-        data = self.data_list[index].copy()     # WARNING: shallow copy. Do deep copy if necessary.
+        data = self.data_list[index].copy()     # WARNING: shallow copy. Do deep copy if necessary. 
 
         # perform transformation on data
         try:

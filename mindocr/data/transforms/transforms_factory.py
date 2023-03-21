@@ -9,7 +9,7 @@ from .det_transforms import *
 from .rec_transforms import *
 from .iaa_augment import *
 
-__all__ = ['create_transforms', 'run_transforms', 'transforms_dbnet_icdar15']
+__all__ = ['create_transforms', 'run_transforms', 'vis_transforms', 'transforms_dbnet_icdar15']
 
 
 # TODO: use class with __call__, to perform transformation
@@ -65,7 +65,35 @@ def run_transforms(data, transforms=None, verbose=False):
             return None
     return data
 
+def vis_transforms(data, transforms=None, verbose=True, save_dir=None):
+    import os
+    import cv2
+    if save_dir is None:
+        save_dir = './vis_transforms'
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    if transforms is None:
+        transforms = []
+    for i, transform in enumerate(transforms):
+        if verbose:
+            print(f'Trans {i}: ', transform)
+            print(f'\tInput: ', {k: data[k].shape for k in data if isinstance(data[k], np.ndarray)})
+        data = transform(data)
+        if verbose:
+            print(f'\tOutput: ', {k: data[k].shape for k in data if isinstance(data[k], np.ndarray)})
 
+        #visualize the image and polys
+        if 'image' in data and 'polys' in data and data['image'].dtype==np.uint8:
+            image = data['image']
+            polys = data['polys']
+            for poly in polys:
+                poly = np.array(poly).reshape(4, 1, 2).astype(np.int32)
+                cv2.polylines(image, [poly], True, (0, 255, 0), 2)
+            file_path = os.path.join(save_dir, 'trans_{}.jpg'.format(i))
+            cv2.imwrite(file_path, image)
+        if data is None:
+            return None
+    return data  
 # ---------------------- Predefined transform pipeline ------------------------------------
 def transforms_dbnet_icdar15(phase='train'):
     """
@@ -133,4 +161,40 @@ def transforms_dbnet_icdar15(phase='train'):
             },
             {'ToCHWImage': None}
         ]
+    return pipeline
+
+def transforms_testr_pretrain(phase='train'):
+    if phase == 'train':
+        pipeline = [
+                    {'DecodeImage': {
+                        'img_mode': 'BGR',
+                        'to_float32': False}},
+                    {'RandomCropWithInstance': {'crop_type':'relative_range', 'crop_size':(0.1, 0.1), 'crop_instance': False}},
+                    {'ResizeShortestEdge': {'min_size': (800, 832, 864, 896, 1000, 1200, 1400), 'max_size': 2333, 'sample_style': 'choice'}}, 
+                    {'RandomFlip': {'horizontal_flip':True, 'vertical_flip': False}},
+                    {'RandomRotation': {'rotation_angle': 10, 'expand': False, 'sample_style': 'choice'}},
+                    {'NormalizeImage': {
+                        'bgr_to_rgb': True,
+                        'is_hwc': True,
+                        'mean' : [123.675, 116.28, 103.53],
+                        'std' : [58.395, 57.12, 57.375],
+                        }
+                    },
+                    {'ToCHWImage': None}
+                    ]
+    else:
+        pipeline = [
+                    {'DecodeImage': {
+                        'img_mode': 'BGR',
+                        'to_float32': False}},
+                    {'ResizeShortestEdge': {'min_size': (800, 832, 864, 896, 1000, 1200, 1400), 'max_size': 2333, 'sample_style': 'choice'}}, 
+                    {'NormalizeImage': {
+                        'bgr_to_rgb': True,
+                        'is_hwc': True,
+                        'mean' : [123.675, 116.28, 103.53],
+                        'std' : [58.395, 57.12, 57.375],
+                        }
+                    },
+                    {'ToCHWImage': None}
+                    ]
     return pipeline
