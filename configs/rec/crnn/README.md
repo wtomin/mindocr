@@ -37,18 +37,20 @@ According to our experiments, the evaluation results on public benchmark dataset
 
 <div align="center">
 
-| **Model** | **Backbone** | **Avg Accuracy** | **Recipe**                                                                                     | **Download**                                                                               | 
-|-----------|--------------|------------------|------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| CRNN      | VGG7         | 82.03            | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_vgg7.yaml)     | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_vgg7-ea7e996c.ckpt)     |
-| CRNN      | ResNet34     | 84.45            | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_resnet34.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_resnet34-8aa4aedb.ckpt) |
-
+| **Model** | **Context** | **Backbone** | **Avg Accuracy** | **Recipe** | **Download** | 
+|-----------|--------------|------------------|------------|--------------| ------ |
+| CRNN (ours)    | D910x8-MS1.8-G | VGG7       | 82.03%         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_vgg7.yaml)     | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_vgg7-ea7e996c.ckpt)     |
+| CRNN (ours)    | D910x8-MS1.8-G | ResNet34_vd   | 84.45%         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_resnet34.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_resnet34-83f37f07.ckpt) |
+| CRNN (PaddleOCR) | - | ResNet34_vd | 83.99% | [yaml](https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.6/configs/rec/rec_r34_vd_none_bilstm_ctc.yml) | [weights](https://paddleocr.bj.bcebos.com/dygraph_v2.0/en/rec_r34_vd_none_bilstm_ctc_v2.0_train.tar) |
 
 </div>
 
 #### Notes
+- Context: Training context denoted as {device}x{pieces}-{MS mode}, where mindspore mode can be G-graph mode or F-pynative mode with ms function. For example, D910x8-MS1.8-G is for training on 8 pieces of Ascend 910 NPU using graph mode based on Minspore version 1.8.
 - Both VGG and ResNet models are trained from scratch without any pre-training.
 - The above models are trained with MJSynth (MJ) and SynthText (ST) datasets. For more data details, please refer to [Data Preparation](#dataset-preparation)
 - Evaluations are tested individually on each benchmark dataset, and Avg Accuracy is the average of accuracies across all sub-datasets.
+- PaddleOCR version of CRNN, we directly use the trained model provided on their [github](https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.6/doc/doc_en/algorithm_rec_crnn_en.md).
 
 
 ## Quick Start
@@ -91,7 +93,7 @@ python tools/train.py --config configs/rec/crnn/crnn_resnet34.yaml
 
 ### Evaluation
 
-To evaluate the accuracy of the trained model, you can use `eval.py`. Please **add** an additional configuration parameter **ckpt_load_path** in `eval` section and set it to the path of the model checkpoint and then run:
+To evaluate the accuracy of the trained model, you can use `eval.py`. Please set the checkpoint path to the arg `ckpt_load_path` in the `eval` section of yaml config file and then run:
 
 ```
 python tools/eval.py --config configs/rec/crnn/crnn_vgg7.yaml

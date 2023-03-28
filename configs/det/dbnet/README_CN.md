@@ -1,4 +1,4 @@
-[English](https://github.com/mindspore-lab/mindocr/blob/main/configs/det/README.md) | 中文
+[English](README.md) | 中文
 
 # DBNet
 
@@ -13,7 +13,7 @@ DBNet是一种基于分割的场景文本检测算法。在场景文本检测中
 为了避免上述问题，DBNet在网络架构中集成了一个叫作“可微分二值化（Differentiable Binarization）”的自适应阈值。可微分二值化简化了后处理过程，增强了文本检测的性能。此外，在推理阶段移除该部分不会使性能降低[[1](#references)]。
 
 ![dbnet_architecture](https://user-images.githubusercontent.com/16683750/225589619-d50c506c-e903-4f59-a316-8b62586c73a9.png)
-<p style="text-align: center;"><em>图 1. DBNet整体架构图</em></p>
+<p align="center"><em>图 1. DBNet整体架构图</em></p>
 
 DBNet的整体架构图如图1所示，包含以下阶段:
 
@@ -26,11 +26,14 @@ DBNet的整体架构图如图1所示，包含以下阶段:
 ## 实验结果
 
 ### ICDAR2015
+<div align="center">
 
+| **模型** | **骨干网络** | **预训练数据集** | **Recall** | **Precision** | **F-score** | **配置文件**                           | **模型权重下载**                                                                               |
+|------------------|------------|----------------|------------|---------------|-------------|-------------------------------|----------------------------------------------------------------------------------------------|
+| DBNet (ours)     | ResNet-50    | ImageNet       | 81.70%     | 85.84%        | 83.72%      | [yaml](db_r50_icdar15.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/dbnet/dbnet_resnet50-db1df47a.ckpt) |
+| DBNet (PaddleOCR)| ResNet50_vd  | SynthText      | 78.72%     | 86.41%        | 82.38%      |
 
-| **模型** | **骨干网络** | **预训练数据集** | **Recall** | **Precision** | **F-score** | **配置文件**                                                                              | **模型权重下载**                                                                               |
-|---------|------------|----------------|------------|---------------|-------------|-----------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
-| DBNet   | ResNet-50  | ImageNet       | 81.70%     | 85.84%        | 83.72%      | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/det/db_r50_icdar15.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/dbnet/dbnet_resnet50-db1df47a.ckpt) |
+</div>
 
 ## 快速上手
 
@@ -50,7 +53,7 @@ python tools/dataset_converters/convert.py --dataset_name=ic15 --task=det --imag
 
 按照同样的方法生成测试集标签。
 
-生成标签文件后，在配置文件`configs/det/db_r50_icdar15.yaml` 中更新如下文件路径：
+生成标签文件后，在配置文件`configs/det/dbnet/db_r50_icdar15.yaml` 中更新如下文件路径：
 
 ```yaml
 ...
@@ -103,15 +106,15 @@ model:
 在准备好数据集并完成配置文件后，可以使用如下命令开始训练：
 
 ```shell
-python tools/train.py -c=configs/det/db_r50_icdar15.yaml
+python tools/train.py -c=configs/det/dbnet/db_r50_icdar15.yaml
 ```
 
 ### 评估
 
-可以使用 `eval.py`文件来评估训练模型的准确性, 请在`eval`部分 **增加** 一个新的配置文件参数 **ckpt_load_path** 并将其设置为模型checkpoint文件路径，然后运行：
+可以使用 `eval.py`文件来评估训练模型的准确性, 请在yaml配置文件的`eval`部分将参数`ckpt_load_path`设置为模型checkpoint的文件路径，然后运行：
 
 ```shell
-python tools/eval.py -c=configs/det/db_r50_icdar15.yaml
+python tools/eval.py -c=configs/det/dbnet/db_r50_icdar15.yaml
 ```
 
 ## 参考文献

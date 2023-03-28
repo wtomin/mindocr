@@ -37,18 +37,20 @@ Table Format:
 
 <div align="center">
 
-| **模型** | **骨干网络** | **平均准确率**  | **配置文件**                                                                                    | **模型权重下载**                                                                              | 
-|---------|------------|---------------|------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| CRNN    | VGG7       | 82.03         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_vgg7.yaml)     | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_vgg7-ea7e996c.ckpt)     |
-| CRNN    | ResNet34   | 84.45         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_resnet34.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_resnet34-8aa4aedb.ckpt) |
-
+| **模型** | **环境配置** |**骨干网络** | **平均准确率**  | **配置文件** | **模型权重下载** | 
+|-----------|--------------|------------------|------------|--------------| ------ |
+| CRNN (ours)    | D910x8-MS1.8-G | VGG7       | 82.03%         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_vgg7.yaml)     | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_vgg7-ea7e996c.ckpt)     |
+| CRNN (ours)    | D910x8-MS1.8-G | ResNet34_vd   | 84.45%         | [yaml](https://github.com/mindspore-lab/mindocr/blob/main/configs/rec/crnn/crnn_resnet34.yaml) | [weights](https://download.mindspore.cn/toolkits/mindocr/crnn/crnn_resnet34-83f37f07.ckpt) |
+| CRNN (PaddleOCR) | - | ResNet34_vd | 83.99% | [yaml](https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.6/configs/rec/rec_r34_vd_none_bilstm_ctc.yml) | [weights](https://paddleocr.bj.bcebos.com/dygraph_v2.0/en/rec_r34_vd_none_bilstm_ctc_v2.0_train.tar) |
 
 </div>
 
-#### 注释
+#### 注释：
+- 环境配置：训练的环境配置表示为 {处理器}x{处理器数量}-{MS模式}，其中 Mindspore 模式可以是 G-graph 模式或 F-pynative 模式。例如，D910x8-MS1.8-G 用于使用图形模式在8张昇腾910 NPU上依赖Mindspore1.8版本进行训练。
 - VGG 和 ResNet 模型都是从头开始训练的，无需任何预训练。
 - 上述模型是用 MJSynth(MJ)和 SynthText(ST)数据集训练的。更多数据详情，请参考 [数据集准备](#数据集准备)。
 - 评估在每个基准数据集上单独测试，平均准确度是所有子数据集的精度平均值。
+- PaddleOCR版CRNN，我们直接用的是其[github](https://github.com/PaddlePaddle/PaddleOCR/blob/release/2.6/doc/doc_en/algorithm_rec_crnn_en.md)上面提供的已训练好的模型。
 
 
 ## 快速开始
@@ -91,7 +93,7 @@ python tools/train.py --config configs/rec/crnn/crnn_resnet34.yaml
 
 ### 模型评估
 
-若要评估已训练模型的准确性，可以使用`eval.py`。请在`eval`部分添加额外的配置参数**ckpt_load_path**，并将其设置为模型的路径，然后运行：
+若要评估已训练模型的准确性，可以使用`eval.py`。请在yaml配置文件的`eval`部分将参数`ckpt_load_path`设置为模型checkpoint的文件路径，然后运行：
 
 ```
 python tools/eval.py --config configs/rec/crnn/crnn_vgg7.yaml
