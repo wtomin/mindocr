@@ -134,7 +134,7 @@ else
           --label_dir $DIR/syntext2/annotations/syntext_word_eng.json \
           --output_path $DIR/syntext2/train_det_gt.txt
   fi
-
+fi
 
 ##########################mlt2017#########################
 DIR="$DATASETS_DIR/mlt2017"
@@ -159,7 +159,7 @@ else
           --label_dir $DIR/train.json \
           --output_path $DIR/train_det_gt.txt
   fi
-
+fi
 ##########################total_text#########################
 DIR="$DATASETS_DIR/totaltext"
 if  [ ! -d $DIR ] || [  ! "$(ls -A $DIR)"  ]; then
@@ -192,3 +192,4 @@ else
           --label_dir $DIR/annotations/Test/ \
           --output_path $DIR/test_det_gt.txt
   fi
+fi
