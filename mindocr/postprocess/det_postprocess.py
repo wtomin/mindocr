@@ -1,7 +1,10 @@
+from typing import Tuple, Union
 import cv2
 import numpy as np
 import mindspore.numpy as mnp
 from shapely.geometry import Polygon
+import mindspore as ms
+from mindspore import Tensor
 
 from ..data.transforms.det_transforms import expand_poly
 
@@ -53,31 +56,36 @@ class DBPostprocess:
         self._name = pred_name
         self._names = {'binary': 0, 'thresh': 1, 'thresh_binary': 2}
 
-    def __call__(self, pred):
+    def __call__(self, pred, **kwargs):
         """
-        pred:
-            binary: text region segmentation map, with shape (N, H, W)
-            thresh: [if exists] threshold prediction with shape (N, H, W)
-            thresh_binary: [if exists] binarized with threshold, (N, H, W)
+        pred (Union[Tensor, Tuple[Tensor], np.ndarray]):
+            binary: text region segmentation map, with shape (N, 1, H, W)
+            thresh: [if exists] threshold prediction with shape (N, 1, H, W) (optional)
+            thresh_binary: [if exists] binarized with threshold, (N, 1, H, W) (optional)
         Returns:
             result (dict) with keys:
                 polygons: np.ndarray of shape (N, K, 4, 2) for the polygons of objective regions if region_type is 'quad'
                 scores: np.ndarray of shape (N, K), score for each box
         """
-        pred = (pred[self._name] if isinstance(pred, dict) else pred[self._names[self._name]]).squeeze(1)
-        pred = pred.asnumpy()
+        if isinstance(pred, tuple):
+            pred = pred[self._names[self._name]]
+        if isinstance(pred, Tensor):
+            pred = pred.asnumpy()
+        pred = pred.squeeze(1)
+
         segmentation = pred >= self._binary_thresh
 
         # FIXME: dest_size is supposed to be the original image shape (pred.shape -> batch['shape'])
         dest_size = np.array(pred.shape[:0:-1])  # w, h order
         scale = dest_size / np.array(pred.shape[:0:-1])
-        
+
+        # TODO:
         # FIXME: output as dict, keep consistent return format to recognition
         return [self._extract_preds(pr, segm, scale, dest_size) for pr, segm in zip(pred, segmentation)]
 
     def _extract_preds(self, pred, bitmap, scale, dest_size):
         outs = cv2.findContours(bitmap.astype(np.uint8), cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        if len(outs) == 3:
+        if len(outs) == 3:  # FIXME: update to OpenCV 4.x and delete this
             _, contours, _ = outs[0], outs[1], outs[2]
         elif len(outs) == 2:
             contours, _ = outs[0], outs[1]

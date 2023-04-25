@@ -6,7 +6,9 @@ from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust
 from mindspore.dataset.vision import Rotate, HorizontalFlip, VerticalFlip
 #RandomHorizontalFlipWithBBox, RandomVerticalFlipWithBBox, 
 import random
-from ..data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from ...data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust, ToPIL
+
 
 __all__ = ['DecodeImage', 'NormalizeImage', 'ToCHWImage', 'PackLoaderInputs', 'ScalePadImage', 'GridResize',
            'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust', 'RandomFlipWithBBox', 'ResizeShortestEdgeWithBBox', 
@@ -266,29 +268,31 @@ class RandomCropWithBBox:
         polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
 
         if polys:
-            # do not crop through polys => find available coordinates
+            # do not crop through polys => find available "empty" coordinates
             h_array, w_array = np.zeros(size[0], dtype=np.int32), np.zeros(size[1], dtype=np.int32)
             for poly in polys:
                 points = np.maximum(np.round(poly).astype(np.int32), 0)
                 w_array[points[:, 0].min(): points[:, 0].max() + 1] = 1
                 h_array[points[:, 1].min(): points[:, 1].max() + 1] = 1
-            # find available coordinates that don't include text
-            h_avail = np.where(h_array == 0)[0]
-            w_avail = np.where(w_array == 0)[0]
 
-            min_size = np.ceil(size * self._ratio).astype(np.int32)
-            for _ in range(self._max_tries):
-                y = np.sort(np.random.choice(h_avail, size=2))
-                x = np.sort(np.random.choice(w_avail, size=2))
-                start, end = np.array([y[0], x[0]]), np.array([y[1], x[1]])
+            if not h_array.all() and not w_array.all():     # if texts do not occupy full image
+                # find available coordinates that don't include text
+                h_avail = np.where(h_array == 0)[0]
+                w_avail = np.where(w_array == 0)[0]
 
-                if ((end - start) < min_size).any():    # NOQA
-                    continue
+                min_size = np.ceil(size * self._ratio).astype(np.int32)
+                for _ in range(self._max_tries):
+                    y = np.sort(np.random.choice(h_avail, size=2))
+                    x = np.sort(np.random.choice(w_avail, size=2))
+                    start, end = np.array([y[0], x[0]]), np.array([y[1], x[1]])
 
-                # check that at least one polygon is within the crop
-                for poly in polys:
-                    if (poly.min(axis=0) > start[::-1]).all() and (poly.max(axis=0) < end[::-1]).all():     # NOQA
-                        return start, end
+                    if ((end - start) < min_size).any():    # NOQA
+                        continue
+
+                    # check that at least one polygon is within the crop
+                    for poly in polys:
+                        if (poly.max(axis=0) > start[::-1]).all() and (poly.min(axis=0) < end[::-1]).all():     # NOQA
+                            return start, end
 
         # failed to generate a crop or all polys are marked as ignored
         return np.array([0, 0]), size
@@ -297,13 +301,15 @@ class RandomCropWithBBox:
 class RandomColorAdjust:
     def __init__(self, brightness=32.0 / 255, saturation=0.5):
         self._jitter = MSRandomColorAdjust(brightness=brightness, saturation=saturation)
+        self._pil = ToPIL()
 
     def __call__(self, data):
         """
         required keys: image
         modified keys: image
         """
-        data['image'] = self._jitter(data['image'])
+        # there's a bug in MindSpore that requires images to be converted to the PIL format first
+        data['image'] = np.array(self._jitter(self._pil(data['image'])))
         return data
 
 class RandomFlipWithBBox:
