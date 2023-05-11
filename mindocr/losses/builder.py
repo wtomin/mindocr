@@ -2,10 +2,12 @@ import inspect
 from .det_loss import L1BalancedCELoss
 from .rec_loss import CTCLoss
 from .e2e_loss import TESTRLoss 
-
+from .rec_loss import CTCLoss, AttentionLoss
 __all__ = ['build_loss']
 
-supported_losses = ['L1BalancedCELoss', 'CTCLoss', 'TESTRLoss']
+supported_losses = ['L1BalancedCELoss', 'CTCLoss', 'TESTRLoss', 'AttentionLoss']
+
+
 
 def build_loss(name, **kwargs):
     """
@@ -30,7 +32,6 @@ def build_loss(name, **kwargs):
 
     loss_fn = eval(name)(**kwargs)
 
-    # print('loss func inputs: ', loss_fn.construct.__code__.co_varnames)
-    print('==> Loss func input args: \n\t', inspect.signature(loss_fn.construct))
+    # print('=> Loss func input args: \n\t', inspect.signature(loss_fn.construct))
 
     return loss_fn

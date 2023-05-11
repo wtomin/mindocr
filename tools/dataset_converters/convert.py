@@ -23,8 +23,10 @@ from mlt2017 import MLT2017_Converter
 from syntext150k import SYNTEXT150K_Converter
 from coco import COCO_Converter
 from svt import SVT_Converter
+from td500 import TD500_Converter
+from ctw1500 import CTW1500_Converter
 
-supported_datasets = ['ic15', 'totaltext', 'mlt2017', 'syntext150k', 'svt', 'coco']
+supported_datasets = ['ic15', 'totaltext', 'mlt2017', 'syntext150k', 'svt', 'td500', 'ctw1500']
 
 
 def convert(dataset_name, task, image_dir, label_path, output_path=None, path_mode='relative'):

@@ -1,4 +1,6 @@
+import random
 from typing import List, Union
+
 import cv2
 import warnings
 import numpy as np
@@ -8,11 +10,12 @@ from mindspore.dataset.vision import Rotate, HorizontalFlip, VerticalFlip
 #RandomHorizontalFlipWithBBox, RandomVerticalFlipWithBBox, 
 import random
 from ...data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+from shapely.geometry import Polygon, box
 from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust, ToPIL
 
 
 __all__ = ['DecodeImage', 'NormalizeImage', 'ToCHWImage', 'PackLoaderInputs', 'ScalePadImage', 'GridResize',
-           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust',  'ResizeShortestEdgeWithBBox']
+           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust',  'ResizeShortestEdgeWithBBox', 'ValidatePolygons']
 
 
 # TODO: use mindspore C.decode for efficiency
@@ -46,6 +49,7 @@ class DecodeImage:
             img = img.astype('float32')
         data['image'] = img
         # data['ori_image'] = img.copy()
+        data['raw_img_shape'] = img.shape[:2]
         return data
 
 
@@ -196,9 +200,11 @@ class RandomScale:
     Randomly scales an image and its polygons in a predefined scale range.
     Args:
         scale_range: (min, max) scale range.
+        p: probability of the augmentation being applied to an image.
     """
-    def __init__(self, scale_range: Union[tuple, list]):
+    def __init__(self, scale_range: Union[tuple, list], p: float = 0.5):
         self._range = scale_range
+        self._p = p
 
     def __call__(self, data: dict):
         """
@@ -209,33 +215,28 @@ class RandomScale:
             image
             (polys)
         """
-        scale = np.random.uniform(*self._range)
-        data['image'] = cv2.resize(data['image'], dsize=None, fx=scale, fy=scale)
+        if random.random() < self._p:
+            scale = np.random.uniform(*self._range)
+            data['image'] = cv2.resize(data['image'], dsize=None, fx=scale, fy=scale)
 
-        if 'polys' in data:
-            data['polys'] *= scale
+            if 'polys' in data:
+                data['polys'] *= scale
         return data
 
 
 class RandomCropWithBBox:
     """
-    Randomly cuts a crop from an image along with polygons.
+    Randomly cuts a crop from an image along with polygons in the way that the crop doesn't intersect any polygons
+    (i.e. any given polygon is either fully inside or fully outside the crop).
 
     Args:
-        max_tries: number of attempts to try to cut a crop with a polygon in it.
+        max_tries: number of attempts to try to cut a crop with a polygon in it. If fails, scales the whole image to
+                   match the `crop_size`.
         min_crop_ratio: minimum size of a crop in respect to an input image size.
         crop_size: target size of the crop (resized and padded, if needed), preserves sides ratio.
+        p: probability of the augmentation being applied to an image.
     """
-    def __init__(self, max_tries=10, min_crop_ratio=0.1, pad_if_needed=False, crop_size=None,
-                 crop_key = 'polys', tag_key = 'ignore_tags', affect_keys = ['polys', 'ignore_tags', 'texts']):
-        """
-        Args:
-            crop_size: target size of the crop (padded, if needed)
-            pad_if_needed: if True, pads the image to the target size, otherwise keep the crop size.
-            crop_key: the key in data dict that is used to determine whether the crop is valid.
-            tag_key: the key in used to determine whether the bbox will be ignored.
-            affect_keys: the keys in data dict that will be affected by the crop.
-        """
+    def __init__(self, max_tries=10, min_crop_ratio=0.1, crop_size=(640, 640), p: float = 0.5):
         self._crop_size = crop_size
         self._pad_if_needed = pad_if_needed
         if self._pad_if_needed and not self._crop_size:
@@ -245,49 +246,23 @@ class RandomCropWithBBox:
 
         self._ratio = min_crop_ratio
         self._max_tries = max_tries
-        self.crop_key = crop_key
-        self.tag_key = tag_key
-        if self.crop_key not in affect_keys:
-            affect_keys.append(self.crop_key)
-        if self.tag_key not in affect_keys:
-            affect_keys.append(self.tag_key)
-        self.affected_keys = affect_keys
+        self._p = p
 
     def __call__(self, data):
-        start, end = self._find_crop(data)
-        if self._pad_if_needed:
-            scale = min(self._crop_size / (end - start))
-            data['image'] = cv2.resize(data['image'][start[0]: end[0], start[1]: end[1]], None, fx=scale, fy=scale)
-            data['image'] = np.pad(data['image'],
-                               (*tuple((0, cs - ds) for cs, ds in zip(self._crop_size, data['image'].shape[:2])), (0, 0)))
-            
-        else:
-            data['image'] = data['image'][start[0]: end[0], start[1]: end[1]]
-            scale = 1
-        start, end = start[::-1], end[::-1]     # convert to x, y coord
-        new_affect_dict =dict([(k, []) for k in self.affected_keys])
-        assert all([key in data for key in self.affected_keys]), "expect to have all {self.affect_keys} in data"
-        
-        for _id in range(len(data[self.crop_key])):
-            # if the polygon is within the crop
-            if (data[self.crop_key][_id].min(axis=0) > start).all() and (data[self.crop_key][_id].max(axis=0) < end).all():   # NOQA
-                for key in self.affected_keys:
-                    if key in ['bbox', 'boxes', 'polys']:
-                        # polys and boxes are in x, y order
-                        new_affect_dict[key].append((data[key][_id] - start) * scale)
-                    elif key in ['texts', 'ignore_tags', 'rec_ids', 'gt_classes']:
-                        new_affect_dict[key].append(data[key][_id])
-                    else:
-                        raise ValueError(f'key {key} not supported in RandomCropWithBBox')
+        if random.random() < self._p:   # cut a crop
+            start, end = self._find_crop(data)
+        else:                           # scale and pad the whole image
+            start, end = np.array([0, 0]), np.array(data['image'].shape[:2])
 
-        for key in self.affected_keys:
-            if key in ['bbox', 'boxes', 'polys']:
-                if isinstance(data[key], np.ndarray):
-                    data[key] = np.array(new_affect_dict[key]).astype(np.int64)
-                else:
-                    data[key] = new_affect_dict[key]
-            else:
-                data[key] = new_affect_dict[key]
+        scale = min(self._crop_size / (end - start))
+
+        data['image'] = cv2.resize(data['image'][start[0]: end[0], start[1]: end[1]], None, fx=scale, fy=scale)
+        data['actual_size'] = np.array(data['image'].shape[:2])
+        data['image'] = np.pad(data['image'],
+                               (*tuple((0, cs - ds) for cs, ds in zip(self._crop_size, data['image'].shape[:2])), (0, 0)))
+
+        data['polys'] = (data['polys'] - start[::-1]) * scale
+
         return data
 
     def _find_crop(self, data):
@@ -380,4 +355,46 @@ class ResizeShortestEdgeWithBBox(object):
         for key in ['boxes', 'bboxes']:
             if key in data:
                 data[key] = data[key] * scale
+
+class ValidatePolygons:
+    """
+    Validate polygons by:
+     1. filtering out polygons outside an image.
+     2. clipping coordinates of polygons that are partially outside an image to stay within the visible region.
+    Args:
+        min_area: minimum area below which newly clipped polygons considered as ignored.
+    """
+    def __init__(self, min_area: float = 1.0):
+        self._min_area = min_area
+
+    def __call__(self, data: dict):
+        size = data.get('actual_size', np.array(data['image'].shape[:2]))[::-1]     # convert to x, y coord
+        border = box(0, 0, *size)
+
+        new_polys, new_texts, new_tags = [], [], []
+        for np_poly, text, ignore in zip(data['polys'], data['texts'], data['ignore_tags']):
+            if ((0 <= np_poly) & (np_poly < size)).all():   # if the polygon is fully within the image
+                new_polys.append(np_poly)
+
+            else:
+                poly = Polygon(np_poly)
+                if poly.intersects(border):                 # if the polygon is partially within the image
+                    poly = poly.intersection(border)
+                    if poly.area < self._min_area:
+                        ignore = True
+
+                    poly = poly.exterior
+                    poly = poly.coords[::-1] if poly.is_ccw else poly.coords    # sort in clockwise order
+                    new_polys.append(np.array(poly[:-1]))
+
+                else:                                       # the polygon is fully outside the image
+                    continue
+
+            new_tags.append(ignore)
+            new_texts.append(text)
+
+        data['polys'] = new_polys
+        data['texts'] = new_texts
+        data['ignore_tags'] = np.array(new_tags)
+
         return data

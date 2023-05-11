@@ -2,16 +2,24 @@ import os
 import time
 from tqdm import tqdm
 from typing import List
-import shutil
+from packaging import version
 
-import numpy as np
 import mindspore as ms
+from mindspore.ops import functional as F
+from mindspore.common import dtype as mstype
 from mindspore import save_checkpoint
 from mindspore.train.callback._callback import Callback, _handle_loss
 from .visualize import draw_bboxes, show_imgs, recover_image
 from .recorder import PerfRecorder
 
 __all__ = ['Evaluator', 'EvalSaveCallback']
+
+# WARNING: `mindspore.ms_function` will be deprecated and removed in a future version.
+if version.parse(ms.__version__) >= version.parse('2.0.0rc'):
+    from mindspore import jit
+else:
+    from mindspore import ms_function
+    jit = ms_function
 
 
 class Evaluator:
@@ -22,14 +30,25 @@ class Evaluator:
         loss_fn: loss function
         postprocessor: post-processor
         metrics: metrics to evaluate network performance
-        num_columns_to_net: number of inputs to the network in the dataset output columns. Default is 1 for the first column is image.
-        num_columns_of_labels: number of labels in the dataset output columns. Default is None assuming the columns after image (data[1:]) are labels.
-                           If not None, the num_columns_of_labels columns after image (data[1:1+num_columns_of_labels]) are labels, and the remaining columns are additional info like image_path.
+        pred_cast_fp32: whehter to cast network prediction to float 32. Set True if AMP is used.
+        input_indices: The indices of the data tuples which will be fed into the network. If it is None, then the first item will be fed only.
+        label_indices: The indices of the data tuples which will be marked as label. If it is None, then the remaining items will be marked as label.
+        meta_data_indices: The indices for the data tuples which will be marked as meta data. If it is None, then the item indices not in input or label indices are marked as meta data.
     """
 
-    def __init__(self, network, dataloader, loss_fn=None, postprocessor=None, metrics=None,
-                 num_columns_to_net=1, num_columns_of_labels=None, num_epochs=-1,
-                 visualize=False, verbose=False,
+    def __init__(self,
+                 network,
+                 dataloader,
+                 loss_fn=None,
+                 postprocessor=None,
+                 metrics=None,
+                 pred_cast_fp32=False,
+                 input_indices=None,
+                 label_indices=None,
+                 meta_data_indices=None,
+                 num_epochs=-1,
+                 visualize=False,
+                 verbose=False,
                  **kwargs):
         self.net = network
         self.postprocessor = postprocessor
@@ -40,6 +59,7 @@ class Evaluator:
                                                              List), f'Metric object must contain `metric_names` attribute to indicate the metric names as a List type, but not found in {m.__class__.__name__}'
             self.metric_names += m.metric_names
 
+        self.pred_cast_fp32 = pred_cast_fp32
         self.visualize = visualize
         self.verbose = verbose
         eval_loss = False
@@ -49,19 +69,17 @@ class Evaluator:
         assert eval_loss == False, 'not impl'
 
         # create iterator
-        self.reload(dataloader, num_columns_to_net, num_columns_of_labels, num_epochs)
+        self.reload(dataloader, input_indices, label_indices, meta_data_indices, num_epochs)
 
-
-    def reload(self, dataloader, num_columns_to_net=1, num_columns_of_labels=None, num_epochs=-1):
+    def reload(self, dataloader, input_indices=None, label_indices=None, meta_data_indices=None, num_epochs=-1):
         # create iterator
         self.iterator = dataloader.create_tuple_iterator(num_epochs=num_epochs, output_numpy=False, do_copy=False)
         self.num_batches_eval = dataloader.get_dataset_size()
 
         # dataset output columns
-        self.num_inputs  = num_columns_to_net
-        self.num_labels = num_columns_of_labels
-        assert self.num_inputs==1, 'Only num_columns_to_net=1 (single input to network) is needed and supported for current networks.'
-
+        self.input_indices = input_indices
+        self.label_indices = label_indices
+        self.meta_data_indices = meta_data_indices
 
     def eval(self):
         """
@@ -74,15 +92,35 @@ class Evaluator:
             m.clear()
 
         for i, data in tqdm(enumerate(self.iterator), total=self.num_batches_eval):
+            if self.input_indices is not None:
+                inputs = [data[x] for x in self.input_indices]
+            else:
+                inputs = [data[0]]
 
-            inputs = data[:self.num_inputs] # [imgs]
-            gt = data[self.num_inputs:] if self.num_labels is None else data[self.num_inputs: self.num_inputs+self.num_labels]
+            if self.label_indices is not None:
+                gt = [data[x] for x in self.label_indices]
+            else:
+                gt = data[1:]
 
             net_preds = self.net(*inputs)
 
+            if self.pred_cast_fp32:
+                if isinstance(net_preds, ms.Tensor):
+                    net_preds = F.cast(net_preds, mstype.float32)
+                else:
+                    net_preds = [F.cast(p, mstype.float32) for p in net_preds]
+
             if self.postprocessor is not None:
                 # additional info such as image path, original image size, pad shape, extracted in data processing
-                meta_info = data[(self.num_inputs+self.num_labels):] if (self.num_labels is not None) else []
+                if self.meta_data_indices is not None:
+                    meta_info = [data[x] for x in self.meta_data_indices]
+                else:
+                    # assume the indices not in input_indices or label_indices are all meta_data_indices
+                    input_indices = set(self.input_indices) if self.input_indices is not None else {0}
+                    label_indices = set(self.label_indices) if self.label_indices is not None else set(range(1, len(data), 1))
+                    meta_data_indices = sorted(set(range(len(data))) - input_indices - label_indices)
+                    meta_info = [data[x] for x in meta_data_indices]
+
                 data_info = {'labels': gt, 'img_shape': inputs[0].shape, 'meta_info': meta_info}
                 preds = self.postprocessor(net_preds, **data_info)
 
@@ -92,7 +130,7 @@ class Evaluator:
 
             # visualize
             if self.verbose:
-                print('Eval data info: ', data_info)
+                print('Data meta info: ', data_info)
 
             if self.visualize:
                 img = img[0].asnumpy()
@@ -117,6 +155,7 @@ class EvalSaveCallback(Callback):
     Args:
         network (nn.Cell): network (without loss)
         loader (Dataset): dataloader
+        ema: if not None, the ema params will be loaded to the network for evaluation.
     """
 
     def __init__(self,
@@ -125,13 +164,17 @@ class EvalSaveCallback(Callback):
                  loss_fn=None,
                  postprocessor=None,
                  metrics=None,
+                 pred_cast_fp32=False,
                  rank_id=0,
+                 device_num=None,
                  logger=None,
                  batch_size=20,
                  ckpt_save_dir='./',
                  main_indicator='hmean',
-                 num_columns_to_net=1,  # TODO: parse eval cfg for short?
-                 num_columns_of_labels=None,
+                 ema=None,
+                 input_indices=None,
+                 label_indices=None,
+                 meta_data_indices=None,
                  val_interval=1,
                  val_start_epoch=1,
                  log_interval=1,
@@ -140,13 +183,16 @@ class EvalSaveCallback(Callback):
         self.is_main_device = rank_id in [0, None]
         self.loader_eval = loader
         self.network = network
+        self.ema = ema
         self.logger = print if logger is None else logger.info
         self.val_interval = val_interval
         self.val_start_epoch = val_start_epoch
         self.log_interval = log_interval
         self.batch_size = batch_size
         if self.loader_eval is not None:
-            self.net_evaluator = Evaluator(network, loader, loss_fn, postprocessor, metrics, num_columns_to_net=num_columns_to_net, num_columns_of_labels=num_columns_of_labels)
+            self.net_evaluator = Evaluator(network, loader, loss_fn, postprocessor, metrics,
+                                           pred_cast_fp32=pred_cast_fp32, input_indices=input_indices,
+                                           label_indices=label_indices, meta_data_indices=meta_data_indices)
             self.main_indicator = main_indicator
             self.best_perf = -1e8
         else:
@@ -157,10 +203,20 @@ class EvalSaveCallback(Callback):
         if not os.path.exists(ckpt_save_dir):
             os.makedirs(ckpt_save_dir)
 
-        self._losses = list()
         self.last_epoch_end_time = time.time()
         self.epoch_start_time = time.time()
         self.step_start_time = time.time()
+
+        self._losses = []
+
+        self._reduce_sum = ms.ops.AllReduce()
+        self._device_num = device_num
+        # lamda expression is not supported in jit
+        self._loss_reduce = self._reduce if device_num is not None else lambda x: x
+
+    @jit
+    def _reduce(self, x):
+        return self._reduce_sum(x) / self._device_num   # average value across all devices
 
     def on_train_step_end(self, run_context):
         """
@@ -175,19 +231,17 @@ class EvalSaveCallback(Callback):
         data_sink_mode = cb_params.dataset_sink_mode
         cur_step_in_epoch = (cb_params.cur_step_num - 1) % cb_params.batch_num + 1
 
-        # TODO: need to stop gradient here ?
-        self._losses.append(loss.asnumpy())
+        self._losses.append(self._loss_reduce(loss))
 
         if not data_sink_mode and cur_step_in_epoch % self.log_interval == 0:
             opt = cb_params.train_network.optimizer
             learning_rate = opt.learning_rate
-            cur_lr = learning_rate(opt.global_step - 1).asnumpy()
+            cur_lr = learning_rate(opt.global_step - 1).asnumpy().squeeze()
             per_step_time = (time.time() - self.step_start_time) * 1000 / self.log_interval
             fps = self.batch_size * 1000 / per_step_time
-            loss = np.average(self._losses)
-            msg = "epoch: [%s/%s] step: [%s/%s], loss: %.6f, lr: %.6f, per step time: %.3f ms, fps: %.2f img/s" % (
-                      cur_epoch, cb_params.epoch_num, cur_step_in_epoch, cb_params.batch_num,
-                      loss, cur_lr, per_step_time, fps)
+            loss = self._losses[-1].asnumpy()
+            msg = f"epoch: [{cur_epoch}/{cb_params.epoch_num}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], " \
+                  f"loss: {loss:.6f}, lr: {cur_lr:.6f}, per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
             self.logger(msg)
             self.step_start_time = time.time()
 
@@ -209,23 +263,26 @@ class EvalSaveCallback(Callback):
             run_context (RunContext): Include some information of the model.
         """
         cb_params = run_context.original_args()
-        loss = cb_params.net_outputs
         cur_epoch = cb_params.cur_epoch_num
         train_time = (time.time() - self.epoch_start_time)
-        train_loss = np.average(self._losses)  # TODO: aggregate training loss for multiple cards
+        train_loss = ms.ops.stack(self._losses).mean().asnumpy()
 
         epoch_time = (time.time() - self.epoch_start_time)
         per_step_time = epoch_time * 1000 / cb_params.batch_num
         fps = 1000 * self.batch_size / per_step_time
-        msg = "epoch: [%s/%s], loss: %.6f, epoch time: %.3f s, per step time: %.3f ms, fps: %.2f img/s" % (
-            cur_epoch, cb_params.epoch_num, train_loss, epoch_time, per_step_time, fps)
+        msg = f"epoch: [{cur_epoch}/{cb_params.epoch_num}], loss: {train_loss:.6f}, " \
+              f"epoch time: {epoch_time:.3f} s, per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
         self.logger(msg)
 
         eval_done = False
         if self.loader_eval is not None:
             if cur_epoch >= self.val_start_epoch and (cur_epoch - self.val_start_epoch) % self.val_interval == 0:
                 eval_start = time.time()
+                if self.ema is not None:
+                    # swap ema weight and network weight
+                    self.ema.swap_before_eval()
                 measures = self.net_evaluator.eval()
+
                 eval_done = True
                 if self.is_main_device:
                     perf = measures[self.main_indicator]
@@ -245,7 +302,9 @@ class EvalSaveCallback(Callback):
                     or (
                     self.main_indicator != 'train_loss' and eval_done and perf > self.best_perf):  # when val_while_train enabled, only find best checkpoint after eval done.
                 self.best_perf = perf
+                # ema weight will be saved if enable.
                 save_checkpoint(self.network, os.path.join(self.ckpt_save_dir, 'best.ckpt'))
+
                 self.logger(f'=> Best {self.main_indicator}: {self.best_perf}, checkpoint saved.')
 
             # record results
@@ -261,6 +320,10 @@ class EvalSaveCallback(Callback):
             else:
                 epoch_perf_values = [cur_epoch, train_loss, train_time]
             self.rec.add(*epoch_perf_values)  # record column values
+
+        # swap back network weight and ema weight. MUST execute after model saving and before next-step training
+        if (self.ema is not None) and eval_done:
+            self.ema.swap_after_eval()
 
         tot_time = time.time() - self.last_epoch_end_time
         self.last_epoch_end_time = time.time()

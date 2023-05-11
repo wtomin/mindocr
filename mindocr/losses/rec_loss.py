@@ -34,7 +34,7 @@ class CTCLoss(LossBase):
         self.ctc_loss = ops.CTCLoss(ctc_merge_repeated=True)
 
         self.reduction = reduction
-        print('D: ', self.label_indices.shape)
+        #print('D: ', self.label_indices.shape)
 
     # TODO: diff from paddle, paddle takes `label_length` as input too.
     def construct(self, pred: Tensor, label: Tensor):
@@ -57,6 +57,20 @@ class CTCLoss(LossBase):
             loss = loss.mean()
 
         return loss
+
+
+class AttentionLoss(LossBase):
+    def __init__(self, reduction='mean'):
+        super().__init__()
+        # ignore <GO> symbol
+        self.criterion = nn.CrossEntropyLoss(reduction=reduction, ignore_index=0)
+
+    def construct(self, logits, labels):
+        labels = labels[:, 1:]  # wihout <GO> symbol
+        num_classes = logits.shape[-1]
+        logits = ops.reshape(logits, (-1, num_classes))
+        labels = ops.reshape(labels, (-1,))
+        return self.criterion(logits, labels)
 
 
 if __name__ == '__main__':

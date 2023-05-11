@@ -271,3 +271,72 @@ else
           --output_path $DIR/test_det_gt.txt
   fi
 fi
+##########################td500#########################
+DIR="$DATASETS_DIR/td500"
+if  [ ! -d $DIR ] || [  ! "$(ls -A $DIR)"  ]; then
+  echo "td500 is Empty! Skipped."
+else
+  unzip $DIR/MSRA-TD500.zip -d  $DIR/
+  rm $DIR/MSRA-TD500.zip
+
+
+  if test -f "$DIR/MSRA-TD500/train_det_gt.txt"; then
+     echo "$DIR/MSRA-TD500/train_det_gt.txt exists."
+  else
+     python tools/dataset_converters/convert.py \
+          --dataset_name  td500 \
+          --task det \
+          --image_dir $DIR/MSRA-TD500/train/ \
+          --label_dir $DIR/MSRA-TD500/train/ \
+          --output_path $DIR/MSRA-TD500/train_det_gt.txt
+  fi
+  if test -f "$DIR/MSRA-TD500/test_det_gt.txt"; then
+     echo "$DIR/MSRA-TD500/test_det_gt.txt exists."
+  else
+     python tools/dataset_converters/convert.py \
+          --dataset_name  td500 \
+          --task det \
+          --image_dir $DIR/MSRA-TD500/test/ \
+          --label_dir $DIR/MSRA-TD500/test/ \
+          --output_path $DIR/MSRA-TD500/test_det_gt.txt
+  fi
+fi
+
+##########################ctw1500#########################
+DIR="$DATASETS_DIR/ctw1500"
+if  [ ! -d $DIR ] || [  ! "$(ls -A $DIR)"  ]; then
+  echo "ctw1500 is Empty! Skipped."
+else
+  unzip $DIR/train_images.zip -d  $DIR/
+  rm $DIR/train_images.zip
+
+  unzip $DIR/test_images.zip -d  $DIR/
+  rm $DIR/test_images.zip
+
+  unzip $DIR/ctw1500_train_labels.zip -d  $DIR/
+  rm $DIR/ctw1500_train_labels.zip
+
+  unzip $DIR/gt_ctw1500.zip -d  $DIR/gt_ctw1500/
+  rm $DIR/gt_ctw1500.zip
+
+  if test -f "$DIR/train_det_gt.txt"; then
+     echo "$DIR/train_det_gt.txt exists."
+  else
+     python tools/dataset_converters/convert.py \
+          --dataset_name  ctw1500 \
+          --task det \
+          --image_dir $DIR/train_images/ \
+          --label_dir $DIR/ctw1500_train_labels/ \
+          --output_path $DIR/train_det_gt.txt
+  fi
+  if test -f "$DIR/test_det_gt.txt"; then
+     echo "$DIR/test_det_gt.txt exists."
+  else
+     python tools/dataset_converters/convert.py \
+          --dataset_name  ctw1500 \
+          --task det \
+          --image_dir $DIR/test_images/ \
+          --label_dir $DIR/gt_ctw1500/ \
+          --output_path $DIR/test_det_gt.txt
+  fi
+fi
