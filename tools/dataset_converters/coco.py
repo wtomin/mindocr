@@ -92,11 +92,11 @@ class COCO_Converter(object):
                         bbox = annot['bbox'] # [x_min, y_min, width, height]
                         bbox = [[bbox[0], bbox[1]], [bbox[0]+bbox[2], bbox[1]], [bbox[0]+bbox[2], bbox[1]+bbox[3]], [bbox[0], bbox[1]+bbox[3]]]
                         bbox = [[x[0], x[1]] for x in bbox]
-                        image_annot['points'] = bbox
+                        image_annot['points'] = bbox # in other dataset converters, annt['points'] are always bbox, usually in four points, sometimes 5 or 6 points
                     polys = annot.get('polys', None)
                     if polys:
                         polys = [[x, y] for x, y in zip(polys[0::2], polys[1::2])]
-                        image_annot['polygons'] = polys
+                        image_annot['polys'] = polys
                     bezier = annot.get('bezier_pts', None)
                     if bezier:
                         image_annot["beziers"]=bezier

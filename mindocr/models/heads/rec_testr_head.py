@@ -25,7 +25,7 @@ class TESTRHead(nn.Cell):
     def __init__(self, hidden_size:int,
                  in_channels: int,
                  num_classes: int,
-                 num_pred: int, 
+                 num_pred: int, # num of control points
                  use_polygon: bool,
                  aux_loss: bool,
                  voc_size: int,
@@ -96,48 +96,49 @@ class TESTRHead(nn.Cell):
                 for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
     
     
-    def inference(self, ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes):
-        """
+    # def inference(self, ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes):
+    #     """
         
-        """
-        assert len(ctrl_point_cls) == len(image_sizes)
-        results = []
+    #     """
+    #     assert len(ctrl_point_cls) == len(image_sizes)
+    #     results = []
 
-        text_pred = ops.softmax(text_pred, -1)
-        prob = ctrl_point_cls.mean(-2).sigmoid()
-        scores, labels = prob.max(-1)
+    #     text_pred = ops.softmax(text_pred, -1)
+    #     prob = ctrl_point_cls.mean(-2).sigmoid()
+    #     scores, labels = prob.max(-1)
 
-        for scores_per_image, labels_per_image, ctrl_point_per_image, text_per_image, image_size in zip(
-            scores, labels, ctrl_point_coord, text_pred, image_sizes
-        ):
-            selector = scores_per_image >= self.test_score_threshold
-            scores_per_image = scores_per_image[selector]
-            labels_per_image = labels_per_image[selector]
-            ctrl_point_per_image = ctrl_point_per_image[selector]
-            text_per_image = text_per_image[selector]
-            result = Instances(image_size) # the Instance is imported from detectron2, needs to be replaced.
-            result.scores = scores_per_image
-            result.pred_classes = labels_per_image
-            result.rec_scores = text_per_image
-            ctrl_point_per_image[..., 0] *= image_size[1]
-            ctrl_point_per_image[..., 1] *= image_size[0]
-            if self.use_polygon:
-                result.polygons = ctrl_point_per_image.flatten(1)
-            else:
-                result.beziers = ctrl_point_per_image.flatten(1)
-            _, topi = text_per_image.topk(1)
-            result.recs = topi.squeeze(-1)
-            results.append(result)
-        return results
-    def get_processed_results(self, output_from_heads, image_sizes):
-        ctrl_point_cls = output_from_heads["pred_logits"]
-        ctrl_point_coord = output_from_heads["pred_ctrl_points"]
-        text_pred = output_from_heads["pred_texts"]
-        results = self.inference(ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes)
-        processed_results = []
-        for results_per_image, input_per_image, image_size in zip(results, batched_inputs, image_sizes): # see if we can delete batched inputs here
-            # height = input_per_image.get("height", image_size[0])
-            # width = input_per_image.get("width", image_size[1])
-            r = detector_postprocess(results_per_image, height, width)
-            processed_results.append({"instances": r})
-        return processed_results
+    #     for scores_per_image, labels_per_image, ctrl_point_per_image, text_per_image, image_size in zip(
+    #         scores, labels, ctrl_point_coord, text_pred, image_sizes
+    #     ):
+    #         selector = scores_per_image >= self.test_score_threshold
+    #         scores_per_image = scores_per_image[selector]
+    #         labels_per_image = labels_per_image[selector]
+    #         ctrl_point_per_image = ctrl_point_per_image[selector]
+    #         text_per_image = text_per_image[selector]
+    #         result = Instances(image_size) # the Instance is imported from detectron2, needs to be replaced.                 The :class:`Instances` object has the following keys:
+    #             "pred_boxes", "pred_classes", "scores", "pred_masks", "pred_keypoints"
+    #         result.scores = scores_per_image
+    #         result.pred_classes = labels_per_image
+    #         result.rec_scores = text_per_image
+    #         ctrl_point_per_image[..., 0] *= image_size[1]
+    #         ctrl_point_per_image[..., 1] *= image_size[0]
+    #         if self.use_polygon:
+    #             result.polygons = ctrl_point_per_image.flatten(1)
+    #         else:
+    #             result.beziers = ctrl_point_per_image.flatten(1)
+    #         _, topi = text_per_image.topk(1)
+    #         result.recs = topi.squeeze(-1)
+    #         results.append(result)
+    #     return results
+    # def get_processed_results(self, output_from_heads, image_sizes):
+    #     ctrl_point_cls = output_from_heads["pred_logits"]
+    #     ctrl_point_coord = output_from_heads["pred_ctrl_points"]
+    #     text_pred = output_from_heads["pred_texts"]
+    #     results = self.inference(ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes)
+    #     processed_results = []
+    #     for results_per_image, input_per_image, image_size in zip(results, batched_inputs, image_sizes): # see if we can delete batched inputs here
+    #         # height = input_per_image.get("height", image_size[0])
+    #         # width = input_per_image.get("width", image_size[1])
+    #         r = detector_postprocess(results_per_image, height, width) # part of post process
+    #         processed_results.append({"instances": r})
+    #     return processed_results

@@ -73,7 +73,6 @@ def main(cfg):
         is_train=True,
     )
     num_batches = loader_train.get_dataset_size()
-
     loader_eval = None
     if cfg.system.val_while_train:
         loader_eval = build_dataset(

@@ -268,7 +268,6 @@ class TESTRLoss(LossBase):
         return loss_map[loss_name](outputs, targets, indices, num_inst, **kwargs)
 
     def construct(self, outputs, targets):
-        import pdb; pdb.set_trace()
         # change the targets
         targets = self.prepare_targets(targets)
         # Remove auxiliary outputs from the outputs

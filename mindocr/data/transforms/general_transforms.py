@@ -1,5 +1,6 @@
 from typing import List, Union
 import cv2
+import warnings
 import numpy as np
 from PIL import Image
 from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust
@@ -11,8 +12,7 @@ from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust, T
 
 
 __all__ = ['DecodeImage', 'NormalizeImage', 'ToCHWImage', 'PackLoaderInputs', 'ScalePadImage', 'GridResize',
-           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust', 'RandomFlipWithBBox', 'ResizeShortestEdgeWithBBox', 
-           'RandomRotationWithBBox']
+           'RandomScale', 'RandomCropWithBBox', 'RandomColorAdjust',  'ResizeShortestEdgeWithBBox']
 
 
 # TODO: use mindspore C.decode for efficiency
@@ -226,16 +226,32 @@ class RandomCropWithBBox:
         min_crop_ratio: minimum size of a crop in respect to an input image size.
         crop_size: target size of the crop (resized and padded, if needed), preserves sides ratio.
     """
-    def __init__(self, max_tries=10, min_crop_ratio=0.1, pad_if_needed=True, crop_size=(640, 640)):
+    def __init__(self, max_tries=10, min_crop_ratio=0.1, pad_if_needed=False, crop_size=None,
+                 crop_key = 'polys', tag_key = 'ignore_tags', affect_keys = ['polys', 'ignore_tags', 'texts']):
         """
         Args:
             crop_size: target size of the crop (padded, if needed)
             pad_if_needed: if True, pads the image to the target size, otherwise keep the crop size.
+            crop_key: the key in data dict that is used to determine whether the crop is valid.
+            tag_key: the key in used to determine whether the bbox will be ignored.
+            affect_keys: the keys in data dict that will be affected by the crop.
         """
         self._crop_size = crop_size
         self._pad_if_needed = pad_if_needed
+        if self._pad_if_needed and not self._crop_size:
+            raise ValueError('crop_size must be specified if pad_if_needed is True')
+        elif not self._pad_if_needed and self._crop_size:
+            warnings.warn('crop_size is ignored if pad_if_needed is False')
+
         self._ratio = min_crop_ratio
         self._max_tries = max_tries
+        self.crop_key = crop_key
+        self.tag_key = tag_key
+        if self.crop_key not in affect_keys:
+            affect_keys.append(self.crop_key)
+        if self.tag_key not in affect_keys:
+            affect_keys.append(self.tag_key)
+        self.affected_keys = affect_keys
 
     def __call__(self, data):
         start, end = self._find_crop(data)
@@ -249,23 +265,34 @@ class RandomCropWithBBox:
             data['image'] = data['image'][start[0]: end[0], start[1]: end[1]]
             scale = 1
         start, end = start[::-1], end[::-1]     # convert to x, y coord
-        new_polys, new_texts, new_ignores = [], [], []
-        for _id in range(len(data['polys'])):
+        new_affect_dict =dict([(k, []) for k in self.affected_keys])
+        assert all([key in data for key in self.affected_keys]), "expect to have all {self.affect_keys} in data"
+        
+        for _id in range(len(data[self.crop_key])):
             # if the polygon is within the crop
-            if (data['polys'][_id].min(axis=0) > start).all() and (data['polys'][_id].max(axis=0) < end).all():   # NOQA
-                new_polys.append((data['polys'][_id] - start) * scale)
-                new_texts.append(data['texts'][_id])
-                new_ignores.append(data['ignore_tags'][_id])
+            if (data[self.crop_key][_id].min(axis=0) > start).all() and (data[self.crop_key][_id].max(axis=0) < end).all():   # NOQA
+                for key in self.affected_keys:
+                    if key in ['bbox', 'boxes', 'polys']:
+                        # polys and boxes are in x, y order
+                        new_affect_dict[key].append((data[key][_id] - start) * scale)
+                    elif key in ['texts', 'ignore_tags', 'rec_ids', 'gt_classes']:
+                        new_affect_dict[key].append(data[key][_id])
+                    else:
+                        raise ValueError(f'key {key} not supported in RandomCropWithBBox')
 
-        data['polys'] = np.array(new_polys).astype(np.int64) if isinstance(data['polys'], np.ndarray) else new_polys
-        data['texts'] = new_texts
-        data['ignore_tags'] = new_ignores
-
+        for key in self.affected_keys:
+            if key in ['bbox', 'boxes', 'polys']:
+                if isinstance(data[key], np.ndarray):
+                    data[key] = np.array(new_affect_dict[key]).astype(np.int64)
+                else:
+                    data[key] = new_affect_dict[key]
+            else:
+                data[key] = new_affect_dict[key]
         return data
 
     def _find_crop(self, data):
         size = np.array(data['image'].shape[:2])
-        polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
+        polys = [poly for poly, ignore in zip(data[self.crop_key], data[self.tag_key]) if not ignore]
 
         if polys:
             # do not crop through polys => find available "empty" coordinates
@@ -312,35 +339,6 @@ class RandomColorAdjust:
         data['image'] = np.array(self._jitter(self._pil(data['image'])))
         return data
 
-class RandomFlipWithBBox:
-    def __init__(self, horizontal=True, vertical=False, prob=0.5):
-        self.horizontal = horizontal
-        self.h_flip = HorizontalFlip()
-        self.vertical = vertical 
-        self.v_flip = VerticalFlip()
-        self.prob = prob
-    def horizontal_flip_bbox(self, bbox, image_shape):
-        _,width = image_shape
-        bbox[:, :, 0] = width - bbox[:, :, 0]
-        return bbox
-    def vertical_flip_bbox(self, bbox, image_shape):
-        height,_ = image_shape
-        bbox[:, :, 1] = height - bbox[:, :, 1]
-        return bbox
-    def __call__(self, data: dict) -> dict:
-        image = data["image"]
-        bbox = data['polys']
-        p = np.random.uniform(0, 1)
-        if p<=self.prob:
-            if self.horizontal:
-                image = self.h_flip(image)
-                bbox = self.horizontal_flip_bbox(bbox, image.shape[:2])
-            if self.vertical:
-                image = self.v_flip(image)
-                bbox = self.vertical_flip_bbox(bbox, image.shape[:2])
-        data["image"] = image
-        data['polys'] = bbox
-        return data
 class ResizeShortestEdgeWithBBox(object):
     def __init__(self, short_edge_length: List[int], max_size: int, sample_style: str):
         """
@@ -379,73 +377,7 @@ class ResizeShortestEdgeWithBBox(object):
         newh, neww = int(h * scale + 0.5), int(w * scale + 0.5)
         data["image"] = cv2.resize(data["image"], (neww, newh))
         data["polys"] = data["polys"] * scale
-        return data
-
-class RandomRotationWithBBox:
-    def __init__(self, angle, expand=True, center=None, sample_style="range", interp=None):
-        """
-        Args:
-            angle (list[float]): If ``sample_style=="range"``,
-                a [min, max] interval from which to sample the angle (in degrees).
-                If ``sample_style=="choice"``, a list of angles to sample from
-            expand (bool): choose if the image should be resized to fit the whole
-                rotated image (default), or simply cropped
-            center (list[[float, float]]):  If ``sample_style=="range"``,
-                a [[minx, miny], [maxx, maxy]] relative interval from which to sample the center,
-                [0, 0] being the top left of the image and [1, 1] the bottom right.
-                If ``sample_style=="choice"``, a list of centers to sample from
-                Default: None, which means that the center of rotation is the center of the image
-                center has no effect if expand=True because it only affects shifting
-        """
-        assert sample_style in ["range", "choice"], sample_style
-        self.is_range = sample_style == "range"
-        if isinstance(angle, (float, int)):
-            angle = (angle, angle)
-        if center is not None and isinstance(center[0], (float, int)):
-            center = (center, center)
-        self.angle = angle
-        self.center = center
-        self.expand = expand
-        self.interp = interp
-
-    def rotate_bbox(self, bbox, angle, center):
-        cx, cy = center
-        # translate the bounding box to center at origin
-        translated_bbox = bbox - np.array([cx, cy])
-        # rotate the bounding box
-        theta = np.radians(angle)
-        rotation_matrix = np.array([[np.cos(theta), -np.sin(theta)],
-                                    [np.sin(theta), np.cos(theta)]])
-        rotated_bbox = np.dot(translated_bbox, rotation_matrix)
-        rotated_bbox = rotated_bbox + np.array([cx, cy])
-        return rotated_bbox
-    def __call__(self, data):
-        image = data["image"]
-        h, w = image.shape[:2]
-        bbox = data['polys']
-        if self.is_range:
-            angle = random.uniform(self.angle[0], self.angle[1])
-        else:
-            angle = random.choice(self.angle)
-        if self.center is not None:
-            if self.is_range:
-                center = (
-                    np.random.uniform(self.center[0][0], self.center[1][0]),
-                    np.random.uniform(self.center[0][1], self.center[1][1]),
-                )
-            else:
-                center = random.choice(self.center)
-        else:
-            center = None
-        if center is not None:
-            center = (center[0] * w, center[1] * h) # Convert to absolute coordinates
-        else:
-            center = (0.5 * w, 0.5 * h)
-        if angle%360==0:
-            return data
-        image = Rotate(angle, expand=self.expand, center=center)(image)
-        bbox = self.rotate_bbox(bbox, angle, center)
-
-        data["image"] = image
-        data['polys'] = bbox.astype(np.int64)
+        for key in ['boxes', 'bboxes']:
+            if key in data:
+                data[key] = data[key] * scale
         return data

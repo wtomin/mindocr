@@ -1,8 +1,8 @@
 from typing import Tuple, List
 from mindspore import Tensor, nn, ops
 import mindspore.common.dtype as mstype
-from mindcv.models.resnet import ResNet, Bottleneck, default_cfgs
-from mindcv.models.utils import load_pretrained
+from .mindcv_models.resnet import ResNet, Bottleneck, default_cfgs
+from .mindcv_models.utils import load_pretrained
 from ._registry import register_backbone, register_backbone_class
 from mindocr.utils.misc import NestedTensor
 from mindocr.models.layers import PositionalEncoding2D
@@ -10,6 +10,9 @@ __all__ = ['MaskedResNet', 'det_masked_joiner_resnet50']
 
 @register_backbone_class
 class MaskedResNet(ResNet):
+    """
+    A resnet backbone accepting a NestedTensor as input, which has tensors and masks, image_sizes attributes.
+    """
     def __init__(self, block, layers, num_levels, **kwargs):
         super().__init__(block, layers, **kwargs)
         del self.pool, self.classifier  # remove the original header to avoid confusion
@@ -21,16 +24,9 @@ class MaskedResNet(ResNet):
         out_strides = [4, 8, 16, 32]
         self.feature_strides = [out_strides[i] for i in range(4 - self.num_levels, 4)]
     
-    def preprocess_image(self, batched_inputs):
-        """
-        Normalize, pad and batch the input images.
-        """
-        images = [self.normalizer(x["image"].to(self.device)) for x in batched_inputs]
-        images = ImageList.from_tensors(images) # the ImageList is imported from detectron2, needs to be replaced.
-        return images
 
     def construct(self, images: NestedTensor) -> List[Tensor]:
-        images = self.preprocess_image(images)
+        #images = self.preprocess_image(images)
         x = images.tensor
         # basic stem
         x = self.conv1(x)  # stride: 2
@@ -78,6 +74,9 @@ def det_masked_resnet50(pretrained: bool = True, num_levels: int = 3,  **kwargs)
     return model
 
 class Joiner(nn.SequentialCell):
+    """
+    A SequentialCell that joins the backbone and the position encoding.
+    """
     def __init__(self, backbone, position_embedding):
         super().__init__(backbone, position_embedding)
         self.num_levels = backbone.num_levels
@@ -86,10 +85,10 @@ class Joiner(nn.SequentialCell):
         self.feature_strides = backbone.feature_strides
      
     def forward(self, tensor_list: NestedTensor):
-        xs = self[0](tensor_list)
+        xs = self[0](tensor_list) # backbone returns a list of nested tensors
         out = []
         pos = []
-        for _, x in xs.items():
+        for x in xs:
             out.append(x)
             # position encoding
             pos.append(self[1](x))

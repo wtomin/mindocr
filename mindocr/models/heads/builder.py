@@ -1,7 +1,7 @@
 from .conv_head import ConvHead
 from .det_db_head import DBHead
 from .rec_ctc_head import CTCHead
-from rec_testr_head import TESTRHead
+from .rec_testr_head import TESTRHead
 __all__ = ['build_head']
 supported_heads = ['ConvHead', 'DBHead', 'CTCHead', 'TESTRHead']
 

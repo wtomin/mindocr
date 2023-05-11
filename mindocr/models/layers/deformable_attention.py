@@ -237,7 +237,7 @@ class MultiScaleDeformableAttention(nn.Cell):
         attention_weights = ops.softmax(attention_weights, -1)  # (bs, sum(hw), num_head, num_level*num_point)
         attention_weights = self.prob_dropout(attention_weights)
         attention_weights = attention_weights.view(bs, num_query, self.num_heads, self.num_levels, self.num_points)
-        #import pdb; pdb.set_trace()
+
         if reference_points.shape[-1] == 2:
             spatial_shapes_array = ms_np.array(spatial_shapes)
             offset_normalizer = ops.stack([spatial_shapes_array[:, 1], spatial_shapes_array[:, 0]] ,axis=-1)  # (num_level, 2)

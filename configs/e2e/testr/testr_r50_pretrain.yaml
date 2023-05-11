@@ -1,4 +1,92 @@
-_base_: "base_testr_poly.yaml"
+system:
+  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
+  distribute: False
+  amp_level: 'O0'
+  seed: 42
+  val_while_train: True
+  ckpt_save_dir: './tmp_e2e'
+
+model:
+  type: e2e
+  transform: null
+  backbone:
+    name: det_masked_joiner_resnet50
+    pretrained: True
+  neck:
+    name: TESTRDeformableTransformer # Multi-Scale Deformable Attention
+    batch_size: 10
+    num_levels: 4
+    src_seq_length: 1029 # 28*28+14*14+7*7
+    tgt_seq_length: 100
+    hidden_size: 256
+    num_heads: 8
+    ffn_hidden_size: 1024
+    num_encoder_layers: 6
+    num_decoder_layers: 6
+    dec_num_points: 4
+    enc_num_points: 4
+    num_ctrl_points: 16 # the number of points in the polygon or bezier points
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.0
+    hidden_dropout_rate: 0.0
+    activation: relu
+    pos_embed_scale: 6.283185307179586 #2 PI
+    max_text_len: 25
+    return_intermediate_dec: True
+    num_classes: 1
+    voc_size: 96
+    num_proposals: 100
+
+  head:
+    name: TESTRHead
+    num_classes: 1
+    num_pred: 6 # same to the number of decoder layers
+    use_polygon: True
+    aux_loss: True
+    voc_size: 96
+    hidden_size: 256
+
+
+postprocess:
+  # name: DBPostprocess
+  # region_type: 'quad'
+  # thresh: 0.3
+  # box_thresh: 0.55 # TODO: this value is 0.55 in modelzoo and but 0.7 in paddle
+  # max_candidates: 1000
+  # unclip_ratio: 1.5
+
+metric:
+  name: E2EMetric
+  main_indicator: f-score
+
+loss:
+  name: 'TESTRLoss'
+  num_classes: 1
+  num_ctrl_points: 16
+  point_class_weight: 2.0
+  point_coord_weight: 5.0
+  point_text_weight: 4.0
+  box_class_weight: 2.0
+  box_coord_weight: 5.0
+  box_giou_weight: 2.0
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  transformer_dec_layers: 6
+  aux_loss: True
+  
+scheduler:
+  scheduler: polynomial_decay
+  min_lr: 0.
+  lr: 0.007
+  num_epochs: 1200
+  warmup_epochs: 3
+
+optimizer:
+  opt: SGD
+  filter_bias_and_bn: false
+  momentum: 0.9
+  weight_decay: 1.0e-4
+  loss_scale: 1.0
 
 train:
   dataset_sink_mode: True 
@@ -8,6 +96,41 @@ train:
     data_dir: [syntext1/images, syntext2/images, totaltext/train_images, mlt2017/images/MLT_train_images]
     label_file: [syntext1/train_det_gt.txt, syntext2/train_det_gt.txt, totaltext/train_det_gt.txt, mlt2017/train_det_gt.txt ]
     sample_ratio: [ 1.0, 1.0, 1.0, 1.0 ]
+    shuffle: True
+    transform_pipeline:
+      - DecodeImage:
+          img_mode: BGR
+          to_float32: False
+      - TESTRLabelEncode:
+          text_keyname: transcription
+          polygon_keyname: polygons # 16 ctrl points
+          bbox_keyname: points
+      - RandomColorAdjust:
+          brightness: 0.1255  # 32.0 / 255
+          saturation: 0.5
+      - RandomCropWithBBox:
+          max_tries: 10
+          min_crop_ratio: 0.1
+          pad_if_needed: False
+      - ResizeShortestEdgeWithBBox:
+          short_edge_length: [800, 832, 864, 896, 1000, 1200, 1400]
+          max_size: 2333
+          sample_style: choice
+      - IaaAugment:
+          Fliplr: { p: 0.5 }
+          Affine: { rotate: [ -10, 10 ] }
+      - NormalizeImage:
+          bgr_to_rgb: True
+          is_hwc: True
+          mean: imagenet
+          std: imagenet
+      - ToCHWImage:
+    #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
+    output_columns: ['image', 'polys', 'boxes', 'texts','rec_ids', 'ignore_tags', 'gt_classes']
+    #output_keys: ['image'] # for debug op performance
+    num_keys_to_net: 2 # num inputs for network forward func in output_keys
+#    keys_for_loss: 4 # num labels for loss func
+
   loader:
     shuffle: False # TODO: tbc
     batch_size: 8
@@ -23,3 +146,35 @@ eval:
     data_dir: totaltext/test_images
     label_file:  totaltext/test_det_gt.txt
     sample_ratio: [ 1.0 ]
+    sample_ratio: [ 1.0 ]
+    shuffle: False
+    transform_pipeline:
+      - DecodeImage:
+          img_mode: BGR
+          to_float32: False
+      - DetLabelEncode:
+      - ResizeShortestEdge:
+          min_size: 1440
+          max_size: 4000
+          sample_style: choice
+      - NormalizeImage:
+          bgr_to_rgb: True
+          is_hwc: True
+          mean: [123.675, 116.28, 103.53]
+          std:  [58.395, 57.12, 57.375]
+      - ToCHWImage:
+    #  the order of the dataloader list, matching the network input and the labels for evalution 
+    output_keys: [ 'image', 'polys', 'ignore_tags' ] #'shape'] #'img_path']
+    num_keys_to_net: 1 # num inputs for network forward func
+    num_keys_of_labels: 2 # num labels 
+
+  loader:
+    shuffle: False
+    batch_size: 1 # TODO: due to dynamic shape of polygons (num of boxes varies), BS has to be 1
+    drop_remainder: False 
+    max_rowsize: 20
+    num_workers: 1
+
+
+
+

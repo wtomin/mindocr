@@ -3,7 +3,7 @@ import mindspore as ms
 import mindspore.nn as nn
 from mindspore import ops, Tensor
 from mindspore import dtype as mstype
-
+from mindocr.utils.misc import NestedTensor
 from mindspore.common.initializer import Normal
 
 class PositionalEncoding1D(nn.Cell):
@@ -49,8 +49,7 @@ class PositionalEncoding2D(nn.Cell):
         if scale is None:
             scale = 2 * np.pi
         self.scale = scale
-    def construct(self, tensors):
-        x = tensors
+    def construct(self, tensors: NestedTensor):
         mask = tensors.mask
         assert mask is not None
         not_mask = ~mask
@@ -61,7 +60,7 @@ class PositionalEncoding2D(nn.Cell):
             y_embed = (y_embed - 0.5) / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = (x_embed - 0.5) / (x_embed[:, :, -1:] + eps) * self.scale
 
-        dim_t = ops.arange(self.num_pos_feats, dtype=np.float32)
+        dim_t = ops.range(self.num_pos_feats, dtype=np.float32)
         dim_t = self.temperature ** (2 * ops.FloorDiv()(dim_t, 2) / self.num_pos_feats)
 
         pos_x = ops.unsqueeze(x_embed, axis=3) / ops.unsqueeze(dim_t, axis=0)

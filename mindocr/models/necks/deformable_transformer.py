@@ -259,6 +259,7 @@ class TESTRDeformableTransformer(nn.Cell):
 
 
         if num_levels >1:
+            # use three levels by default
             strides = [8, 16, 32]
             num_channels = [512, 1024, 2048]
             num_backbone_outs = len(strides)
@@ -277,6 +278,7 @@ class TESTRDeformableTransformer(nn.Cell):
 
             self.input_proj = nn.CellList(input_proj_list)
         else:
+            # use single level
             strides = [32]
             num_channels = [2048]
             self.input_proj = nn.SequentialCell(

@@ -1,6 +1,6 @@
 """
 This script transforms the icdar2015, syntext1, syntext2, mlt2017, totaltext datasets into the format of the MindSpore OCR project.
-These datasets were used for pretraining
+These datasets were used for pretraining TESTR
 """
 
 DATASETS_DIR="../ade_datasets" 
