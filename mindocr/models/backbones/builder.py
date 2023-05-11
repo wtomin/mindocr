@@ -1,6 +1,7 @@
 import importlib
 from ._registry import backbone_entrypoint, is_backbone, backbone_class_entrypoint, is_backbone_class, list_backbones
 from .mindcv_wrapper import MindCVBackboneWrapper
+from ..utils import load_model
 
 __all__ = ['build_backbone']
 
@@ -14,6 +15,8 @@ def build_backbone(name, **kwargs):
         kwargs (dict): input args for the backbone
            1) if `name` is in the registered backbones (e.g. det_resnet50), kwargs include args for backbone creating likes `pretrained`
            2) if `name` is in the registered backbones class (e.g. DetResNet50), kwargs include args for the backbone configuration like `layers`.
+           - pretrained: can be bool or str. If bool, load model weights from default url defined in the backbone py file. If str, pretrained can be url or local path to a checkpoint.
+
 
     Return:
         nn.Cell for backbone module
@@ -41,12 +44,16 @@ def build_backbone(name, **kwargs):
     elif is_backbone_class(name):
         backbone_class = backbone_class_entrypoint(name)
         backbone = backbone_class(**kwargs)
-        #TODO: load pretrained weights
-
     elif 'mindcv' in name:
-        # TODO: update mindcv to get list of feature tensors, by adding feature_only parameter and out_indices to extract intermediate features.
+        # you can add `feature_only` parameter and `out_indices` in kwargs to extract intermediate features.
         backbone = MindCVBackboneWrapper(name, **kwargs)
     else:
         raise ValueError(f'Invalid backbone name: {name}, supported backbones are: {list_backbones()}')
+
+    if 'pretrained' in kwargs:
+        pretrained = kwargs['pretrained']
+        if not isinstance(pretrained, bool):
+            load_model(backbone, pretrained)
+        # No need to load again if pretrained is bool and True, because pretrained backbone is already loaded in the backbone definition function.')
 
     return backbone

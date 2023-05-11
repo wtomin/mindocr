@@ -101,13 +101,13 @@ MX, which is short for [MindX](https://www.hiascend.com/zh/software/mindx-sdk), 
 
 MindOCR supports OCR model inference with MX Engine. Please refer to [mx_infer](docs/cn/inference_tutorial_cn.md) for detailed illustrations.
 
-#### 2.2 Inference with MS Lite 
+#### 2.2 Inference with MindSpore Lite 
 
 Coming soon
 
 #### 2.3 Inference with native MindSpore
 
-Coming soon
+MindOCR provides the detection and recognition prediction pipeline using MindOCR-trained ckpt files. Please check [here](docs/en/predict_ckpt.md).
 
 ## Model List
 
@@ -149,6 +149,10 @@ We give instructions on how to download the following datasets.
 
 - [x] MLT2017 [paper](https://ieeexplore.ieee.org/abstract/document/8270168) [homepage](https://rrc.cvc.uab.es/?ch=8&com=introduction) [download instruction](docs/en/datasets/mlt2017.md)
 
+- [x] MSRA-TD500 [paper](https://ieeexplore.ieee.org/abstract/document/6247787) [homepage](http://www.iapr-tc11.org/mediawiki/index.php/MSRA_Text_Detection_500_Database_(MSRA-TD500)) [download instruction](docs/en/datasets/td500.md)
+
+- [x] SCUT-CTW1500 [paper](https://www.sciencedirect.com/science/article/pii/S0031320319300664) [homepage](https://github.com/Yuliang-Liu/Curve-Text-Detector) [download instruction](docs/en/datasets/ctw1500.md)
+
 </details>
 
 ### Conversion
@@ -158,8 +162,15 @@ After downloading these datasets in the `DATASETS_DIR` folder, you can run `bash
 ## Notes
 
 ### Change Log
+- 2023/05/04
+1. Support loading self-defined pretrained checkpoints via setting `model-pretrained` with checkpoint url or local path in yaml. 
+2. Support setting probability for executing augmentation including rotation and flip.
+3. Add Exponential Moving Average(EMA) for model training, which can be enabled by setting `train-ema` (default: False) and `train-ema_decay` in the yaml config. 
+4. Arg parameter changed：`num_columns_to_net` -> `net_input_column_index`: change the column number feeding into the network to the column index.
+5. Arg parameter changed：`num_columns_of_labels` -> `label_column_index`: change the column number corresponds to the label to the column index.
+
 - 2023/04/21
-1. Add parameter grouping to support flexible regularization in training. Usage: add `grouping_strategy` argment in yaml config to select a predefined grouping strategy, or use `no_weight_decay_params` argument to pick layers to exclude from weight decay (e.g., bias, norm). Example can be referred in `configs/rec/crnn/crnn_icdar15.yaml` 
+1. Add parameter grouping to support flexible regularization in training. Usage: add `grouping_strategy` argument in yaml config to select a predefined grouping strategy, or use `no_weight_decay_params` argument to pick layers to exclude from weight decay (e.g., bias, norm). Example can be referred in `configs/rec/crnn/crnn_icdar15.yaml` 
 2. Add gradient accumulation to support large batch size training. Usage: add `gradient_accumulation_steps` in yaml config, the global batch size = batch_size * devices * gradient_accumulation_steps. Example can be referred in `configs/rec/crnn/crnn_icdar15.yaml`
 3. Add gradient clip to support training stablization. Enable it by setting `grad_clip` as True in yaml config.
 

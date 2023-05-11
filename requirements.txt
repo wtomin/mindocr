@@ -2,10 +2,10 @@ lmdb
 pyclipper
 shapely
 addict
-scikit-learn
 matplotlib
 addict
 numpy
+shutils
 imgaug>=0.4.0
 tqdm>=4.64.1
 opencv-python-headless>=3.4.18.65
@@ -13,3 +13,4 @@ rapidfuzz>=2.13.7
 Pillow>=9.1.1
 PyYAML>=6.0
 xml-python>=0.4.3
+packaging

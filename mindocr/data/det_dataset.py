@@ -87,8 +87,8 @@ class DetDataset(BaseDataset):
                 if k in _data:
                     self.output_columns.append(k)
                 else:
-                    raise ValueError(f'Key {k} does not exist in data (available keys: {_data.keys()}). '
-                                     'Please check the name or the completeness transformation pipeline.')
+                    raise ValueError(f"Key '{k}' does not exist in data (available keys: {_data.keys()}). "
+                                     "Please check the name or the completeness transformation pipeline.")
 
     def __getitem__(self, index):
         data = self.data_list[index].copy()     # WARNING: shallow copy. Do deep copy if necessary.
@@ -99,7 +99,7 @@ class DetDataset(BaseDataset):
             output_tuple = tuple(data[k] for k in self.output_columns)
         except Exception as e:
             print(f"Error occurred while processing the image: {self.data_list[index]['img_path']}\n", e, flush=True)
-            return self[random.randint(0, len(self.data_list))]     # return another random sample instead
+            return self[random.randrange(len(self.data_list))]  # return another random sample instead
 
         return output_tuple
 
@@ -128,6 +128,8 @@ class DetDataset(BaseDataset):
 
                 for line in lines:
                     img_name, annot_str = self._parse_annotation(line)
+                    if annot_str =='[]':
+                        continue
                     img_path = os.path.join(img_dir, img_name)
                     assert os.path.exists(img_path), "{} does not exist!".format(img_path)
 

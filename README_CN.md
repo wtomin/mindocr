@@ -92,13 +92,13 @@ MX ([MindX](https://www.hiascend.com/zh/software/mindx-sdk)的缩写) 是一个�
 MindOCR集成了MX推理引擎，支持文本检测识别任务，请参考[mx_infer](docs/cn/inference_tutorial_cn.md)。
 
 
-#### 2.2 使用Lite推理 
+#### 2.2 使用MindSpore Lite推理 
 
 敬请期待
 
 #### 2.3 使用原生MindSpore推理
 
-敬请期待
+MindOCR支持使用MindOCR训练好的ckpt文件进行文本检测+文本识别串联推理，请参考[此处](docs/cn/predict_ckpt_cn.md)。
 
 ## 模型列表
 
@@ -139,6 +139,10 @@ MindOCR集成了MX推理引擎，支持文本检测识别任务，请参考[mx_i
 
 - [x] MLT2017 [论文](https://ieeexplore.ieee.org/abstract/document/8270168) [主页](https://rrc.cvc.uab.es/?ch=8&com=introduction) [下载说明](docs/cn/datasets/mlt2017_CN.md)
 
+- [x] MSRA-TD500 [论文](https://ieeexplore.ieee.org/abstract/document/6247787) [主页](http://www.iapr-tc11.org/mediawiki/index.php/MSRA_Text_Detection_500_Database_(MSRA-TD500)) [下载说明](docs/cn/datasets/td500_CN.md)
+
+- [x] SCUT-CTW1500 [论文](https://www.sciencedirect.com/science/article/pii/S0031320319300664) [主页](https://github.com/Yuliang-Liu/Curve-Text-Detector) [下载说明](docs/cn/datasets/ctw1500_CN.md)
+
 </details>
 
 ### 转换
@@ -149,6 +153,10 @@ MindOCR集成了MX推理引擎，支持文本检测识别任务，请参考[mx_i
 ## 重要信息
 
 ### 变更日志
+- 2023/05/04
+1. 参数修改：`num_columns_to_net` -> `net_input_column_index`: 输入网络的columns数量改为输入网络的columns索引
+2. 参数修改：`num_columns_of_labels` -> `label_column_index`: 代表label的columns数量改为代表label的columns索引
+
 - 2023/03/23
 1. 增加dynamic loss scaler支持, 且与drop overflow update兼容。如需使用, 请在配置文件中增加`loss_scale`字段并将`type`参数设为`dynamic`，参考例子请见`configs/rec/crnn/crnn_icdar15.yaml`
 
