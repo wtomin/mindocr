@@ -395,7 +395,7 @@ class ValidatePolygons:
 
 class RandomCropWithInstances:
     """
-    Randomly crop the image so that the cropping region contains the center of all the bboxes/instances in the original image
+    Randomly crop the image so that the cropping region contains all the bboxes/instances in the original image
     Args:
         crop_size (int): size of the crop.
         crop_type (str): type of the crop. One of ['relative', 'absolute']
