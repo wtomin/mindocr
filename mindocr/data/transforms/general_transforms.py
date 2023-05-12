@@ -1,5 +1,5 @@
 import random
-from typing import List, Union
+from typing import List, Union, Tuple
 
 import cv2
 import warnings
@@ -238,12 +238,6 @@ class RandomCropWithBBox:
     """
     def __init__(self, max_tries=10, min_crop_ratio=0.1, crop_size=(640, 640), p: float = 0.5):
         self._crop_size = crop_size
-        self._pad_if_needed = pad_if_needed
-        if self._pad_if_needed and not self._crop_size:
-            raise ValueError('crop_size must be specified if pad_if_needed is True')
-        elif not self._pad_if_needed and self._crop_size:
-            warnings.warn('crop_size is ignored if pad_if_needed is False')
-
         self._ratio = min_crop_ratio
         self._max_tries = max_tries
         self._p = p
@@ -267,7 +261,7 @@ class RandomCropWithBBox:
 
     def _find_crop(self, data):
         size = np.array(data['image'].shape[:2])
-        polys = [poly for poly, ignore in zip(data[self.crop_key], data[self.tag_key]) if not ignore]
+        polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
 
         if polys:
             # do not crop through polys => find available "empty" coordinates
@@ -314,47 +308,47 @@ class RandomColorAdjust:
         data['image'] = np.array(self._jitter(self._pil(data['image'])))
         return data
 
-class ResizeShortestEdgeWithBBox(object):
-    def __init__(self, short_edge_length: List[int], max_size: int, sample_style: str):
-        """
-        Args:
-            short_edge_length (list[int]): list of possible shortest edge length
-            max_size (int): maximum allowed longest edge length
-            sample_style (str): "choice" or "range". If "choice", a length will be
-                randomly chosen from `short_edge_length`. If "range", a length will be
-                sampled from the range of min(short_edge_length) and max(short_edge_length).
-        """
-        if isinstance(short_edge_length, int):
-            short_edge_length = (short_edge_length, short_edge_length)
-        self.is_range = sample_style == "range" 
-        if self.is_range:
-            assert len(short_edge_length) == 2, (
-                "short_edge_length must be two values using 'range' sample style."
-                f" Got {short_edge_length}!"
-            )
-        self.short_edge_length = short_edge_length
-        self.max_size = max_size
-        self.sample_style = sample_style
+# class ResizeShortestEdgeWithBBox(object):
+#     def __init__(self, short_edge_length: List[int], max_size: int, sample_style: str):
+#         """
+#         Args:
+#             short_edge_length (list[int]): list of possible shortest edge length
+#             max_size (int): maximum allowed longest edge length
+#             sample_style (str): "choice" or "range". If "choice", a length will be
+#                 randomly chosen from `short_edge_length`. If "range", a length will be
+#                 sampled from the range of min(short_edge_length) and max(short_edge_length).
+#         """
+#         if isinstance(short_edge_length, int):
+#             short_edge_length = (short_edge_length, short_edge_length)
+#         self.is_range = sample_style == "range" 
+#         if self.is_range:
+#             assert len(short_edge_length) == 2, (
+#                 "short_edge_length must be two values using 'range' sample style."
+#                 f" Got {short_edge_length}!"
+#             )
+#         self.short_edge_length = short_edge_length
+#         self.max_size = max_size
+#         self.sample_style = sample_style
 
-    def __call__(self, data):
-        h, w = data["image"].shape[:2]
-        if self.sample_style == "choice":
-            short_edge = random.choice(self.short_edge_length)
-        elif self.sample_style == "range":
-            short_edge = random.randint(
-                min(self.short_edge_length), max(self.short_edge_length)
-            )
-        else:
-            raise ValueError("Unknown sample style: {}".format(self.sample_style))
+#     def __call__(self, data):
+#         h, w = data["image"].shape[:2]
+#         if self.sample_style == "choice":
+#             short_edge = random.choice(self.short_edge_length)
+#         elif self.sample_style == "range":
+#             short_edge = random.randint(
+#                 min(self.short_edge_length), max(self.short_edge_length)
+#             )
+#         else:
+#             raise ValueError("Unknown sample style: {}".format(self.sample_style))
 
-        # Prevent the biggest axis from being more than max_size
-        scale = min(short_edge / min(h, w), self.max_size / max(h, w))
-        newh, neww = int(h * scale + 0.5), int(w * scale + 0.5)
-        data["image"] = cv2.resize(data["image"], (neww, newh))
-        data["polys"] = data["polys"] * scale
-        for key in ['boxes', 'bboxes']:
-            if key in data:
-                data[key] = data[key] * scale
+#         # Prevent the biggest axis from being more than max_size
+#         scale = min(short_edge / min(h, w), self.max_size / max(h, w))
+#         newh, neww = int(h * scale + 0.5), int(w * scale + 0.5)
+#         data["image"] = cv2.resize(data["image"], (neww, newh))
+#         data["polys"] = data["polys"] * scale
+#         for key in ['boxes', 'bboxes']:
+#             if key in data:
+#                 data[key] = data[key] * scale
 
 class ValidatePolygons:
     """
@@ -398,3 +392,126 @@ class ValidatePolygons:
         data['ignore_tags'] = np.array(new_tags)
 
         return data
+
+class RandomCropWithInstances:
+    """
+    Randomly crop the image so that the cropping region contains all the bboxes/instances in the original image
+    Args:
+        crop_size (int): size of the crop.
+        crop_type (str): type of the crop. One of ['relative', 'absolute']
+        crop_box (bool): whether to allow cropping bounding boxes that are partially outside the image. 
+    """
+    def __init__(self, crop_size: int, crop_type:str, crop_box = True):
+        self._crop_type = crop_type
+        self._crop_box = crop_box
+        assert  self._crop_type in ['relative', 'absolute'], f"crop_type must be one of ['relative', 'absolute']. Got {self._crop_type}!"
+        if isinstance(crop_size, int):
+            self._crop_size = (crop_size, crop_size)
+        elif isinstance(crop_size, float):
+            self._crop_size = (crop_size, crop_size)
+        elif isinstance(crop_size, tuple):
+            assert len(crop_size) == 2, f"crop_size must be a tuple of length 2. Got {crop_size}!"
+            self._crop_size = crop_size
+    def __call__(self, data):
+        image_size = data['image'].shape[:2] # (H, W, C)
+        crop_size = np.array(self._crop_size, dtype=np.int32) if self._crop_type == 'absolute' else (image_size * np.array(self._crop_size)).astype(np.int32)
+        assert (crop_size < image_size).all(), f"crop_size must be smaller than image_size. Got {crop_size} and {image_size}!"
+        polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
+        # randomly select a polygon and find the the minimum and maximum coordinates for the crop box based on the center of the bounding box and the desired crop size.
+        bbox = random.choice(polys)
+        center_yx = np.mean(bbox, axis=0)[::-1]
+        min_yx = np.maximum(np.floor(center_yx).astype(np.int32) - crop_size, 0)
+        max_yx = np.maximum(np.asarray(image_size, dtype=np.int32) - crop_size, 0)
+        max_yx = np.minimum(max_yx, np.ceil(center_yx).astype(np.int32))
+
+        y0 = np.random.randint(min_yx[0], max_yx[0] + 1)
+        x0 = np.random.randint(min_yx[1], max_yx[1] + 1)
+        # if some instance is cropped extend the box
+        if not self._crop_box:
+            num_modifications = 0
+            modified = True
+
+            # convert crop_size to float
+            crop_size = crop_size.astype(np.float32)
+            while modified:
+                modified, x0, y0, crop_size = self.adjust_crop(x0, y0, crop_size, polys)
+                num_modifications += 1
+                if num_modifications > 100:
+                    raise ValueError(
+                        "Cannot finished cropping adjustment within 100 tries (#instances {}).".format(
+                            len(polys)
+                        )
+                    )
+        # crop the image
+        data['image'] = data['image'][y0:y0 + crop_size[0], x0:x0 + crop_size[1]]
+        # crop the polygons
+        data['polys'] = np.array([poly - np.array([x0, y0]) for poly in data['polys']])
+        # crop the bounding boxes
+        if 'boxes' in data:
+            data['boxes'] = np.array([box - np.array([x0, y0])  for box in data['boxes']])
+        return data
+        
+    def adjust_crop(self, x0, y0, crop_size, instances, eps=1e-3):
+        modified = False
+
+        x1 = x0 + crop_size[1]
+        y1 = y0 + crop_size[0]
+
+        for bbox in instances:
+            xmin, ymin = np.min(bbox, axis=0)[0], np.min(bbox, axis=0)[1]
+            xmax, ymax = np.max(bbox, axis=0)[0], np.max(bbox, axis=0)[1]
+            if xmin < x0 - eps and xmax > x0 + eps:
+                #If the bounding box intersects with the left side of the crop box
+                crop_size[1] += x0 - xmin
+                x0 = xmin
+                modified = True 
+
+            if xmin < x1 - eps and xmax > x1 + eps:
+                crop_size[1] += xmax - x1
+                x1 = xmax
+                modified = True
+
+            if ymin < y0 - eps and ymax > y0 + eps:
+                crop_size[0] += y0 - ymin
+                y0 = ymin
+                modified = True
+
+            if ymin < y1 - eps and ymax > y1 + eps:
+                crop_size[0] += ymax - y1
+                y1 = ymax
+                modified = True
+
+        return modified, x0, y0, crop_size
+
+class PadImage:
+    """
+    Pad the image to the specified size.
+    Args:
+        pad_size (int): size of the padding.
+        size_type (str): type of the padding. One of ['relative', 'absolute']
+    """
+    def __init__(self, pad_size, size_type='absolute'):
+        self._pad_size = pad_size
+        self._size_type = size_type
+        assert  self._size_type in ['relative', 'absolute'], f"size_type must be one of ['relative', 'absolute']. Got {self._size_type}!"
+        if isinstance(pad_size, int):
+            self._pad_size = (pad_size, pad_size)
+        elif isinstance(pad_size, float):
+            self._pad_size = (pad_size, pad_size)
+        elif isinstance(pad_size, tuple):
+            assert len(pad_size) == 2, f"pad_size must be a tuple of length 2. Got {pad_size}!"
+            self._pad_size = pad_size
+    
+    def __call__(self, data):
+        # pad the image to the specified size
+        image_size = data['image'].shape[:2] # (H, W, C)
+        pad_size = np.array(self._pad_size, dtype=np.int32) if self._size_type == 'absolute' else (image_size * np.array(self._pad_size)).astype(np.int32)
+        data['image'] = np.pad(data['image'],
+                               (*tuple((0, cs - ds) for cs, ds in zip(pad_size, data['image'].shape[:2])), (0, 0)))
+
+        # create image mask
+        image_mask = np.ones(pad_size, dtype=np.uint8)
+        image_mask[:image_size[0], :image_size[1]] =0
+        data['image_mask'] = image_mask
+        return data
+    
