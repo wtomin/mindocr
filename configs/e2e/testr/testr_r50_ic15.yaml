@@ -109,21 +109,20 @@ train:
       - IaaAugment:
           Resize: { size: [0.5, 3.0]}
           Fliplr: { p: 0.5 }
-          #Affine: { rotate: [ -10, 10 ] } # be careful with rotatation. it may lead to the text out of the image, leading to no text annotations
-      - RandomCropWithBBox:
-          max_tries: 10
-          min_crop_ratio: 0.1
-          pad_if_needed: True
-          crop_size:  [ 640, 640 ]
-          crop_key: polys
-          tag_key: ignore_tags
-          affect_keys: [boxes, rec_ids, texts, gt_classes]
+          Affine: { rotate: [ -10, 10 ] , p: 1.0} # be careful with rotatation. it may lead to the text out of the image, leading to no text annotations
+      - RandomCropWithInstances:
+          crop_size: [0.7, 0.7]
+          crop_type: relative
+          keep_all_boxes: False 
+      - ResizePadImage:
+          target_size: [ 640, 640 ]
+          pad_value: 0
+      - ValidatePolygons:
+          affect_keys: ['polys', 'boxes', 'gt_classes', 'texts', 'rec_ids', 'ignore_tags']
+          min_area: 100
       - PadTESTRLabel:
-          pad_len: 30
-      # - ResizeShortestEdgeWithBBox:
-      #     short_edge_length: 800 # [800, 832, 864, 896, 1000, 1200, 1400]
-      #     max_size: 2333
-      #     sample_style: choice
+          target_len: 30
+          affect_keys: ['polys', 'boxes', 'gt_classes', 'texts', 'rec_ids', 'ignore_tags']
       - NormalizeImage:
           bgr_to_rgb: True
           is_hwc: True
@@ -168,10 +167,6 @@ eval:
           max_tries: 10
           min_crop_ratio: 0.1
           pad_if_needed: False
-      - ResizeShortestEdgeWithBBox:
-          short_edge_length: [800] #[800, 832, 864, 896, 1000, 1200, 1400]
-          max_size: 2333
-          sample_style: choice
       - IaaAugment:
           Fliplr: { p: 0.5 }
           Affine: { rotate: [ -10, 10 ] }

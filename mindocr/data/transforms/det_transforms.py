@@ -81,24 +81,31 @@ class TESTRLabelEncode:
         data['gt_classes'] = np.zeros(len(txts), dtype=np.int32)
         return data
 class PadTESTRLabel:
-    def __init__(self, pad_len=20):
-        self.pad_len = pad_len
+    def __init__(self, target_len=30, affect_keys=['polys', 'boxes', 'texts', 'rec_ids', 'ignore_tags', 'gt_classes']):
+        self.target_len = target_len
+        self._affect_keys = affect_keys
+        assert 'polys' in self._affect_keys, "polys should be included in affect_keys"
     def __call__(self, data):
         nBox = len(data['polys'])
-        if nBox<self.pad_len:
-            data['polys'] = np.concatenate([data['polys'], np.zeros((self.pad_len-nBox, 16, 2), dtype=np.float32)], axis=0)
-            data['boxes'] = np.concatenate([data['boxes'], np.zeros((self.pad_len-nBox, 4, 2), dtype=np.float32)], axis=0)
-            data['texts'] = data['texts'] + ['###']*(self.pad_len-nBox)
-            data['rec_ids'] = np.concatenate([data['rec_ids'], 96*np.ones((self.pad_len-nBox, 25), dtype=np.int32)], axis=0)
-            data['ignore_tags'] = np.concatenate([data['ignore_tags'], np.ones((self.pad_len-nBox), dtype=bool)], axis=0)
-            data['gt_classes'] = np.concatenate([data['gt_classes'], np.ones((self.pad_len-nBox), dtype=np.int32)], axis=0)
+        if nBox>=self.target_len:
+            for key in self._affect_keys:
+                data[key] = data[key][:self.target_len]
         else:
-            data['polys'] = data['polys'][:self.pad_len]
-            data['boxes'] = data['boxes'][:self.pad_len]
-            data['texts'] = data['texts'][:self.pad_len]
-            data['rec_ids'] = data['rec_ids'][:self.pad_len]
-            data['ignore_tags'] = data['ignore_tags'][:self.pad_len]
-            data['gt_classes'] = data['gt_classes'][:self.pad_len]
+            for key in self._affect_keys:
+                if key == 'polys':
+                    data['polys'] = np.concatenate([data['polys'], np.zeros((self.target_len-nBox, 16, 3), dtype=np.float32)], axis=0)
+                elif key == 'boxes':
+                    data['boxes'] = np.concatenate([data['boxes'], np.zeros((self.target_len-nBox, 4, 2), dtype=np.float32)], axis=0)
+                elif key == 'texts':
+                    data['texts'] = data['texts'] + ['###']*(self.target_len-nBox)
+                elif    key == 'rec_ids':
+                    data['rec_ids'] = np.concatenate([data['rec_ids'], 96*np.ones((self.target_len-nBox, 25), dtype=np.int32)], axis=0)
+                elif key == 'ignore_tags':
+                    data['ignore_tags'] = np.concatenate([data['ignore_tags'], np.ones((self.target_len-nBox), dtype=bool)], axis=0)
+                elif key == 'gt_classes':
+                    data['gt_classes'] = np.concatenate([data['gt_classes'], np.ones((self.target_len-nBox), dtype=np.int32)], axis=0)
+        for key in self._affect_keys:
+            assert len(data[key]) == self.target_len, "length of {} should be {}".format(key, self.target_len)
         return data
 class DetLabelEncode:
     def __init__(self, **kwargs):

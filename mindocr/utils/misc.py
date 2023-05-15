@@ -192,7 +192,6 @@ class BatchPadding:
     
     def pad_DetData(self, image, polys, boxes, texts, rec_ids, ignore_tags, gt_classes, batchinfo):
         images_list = image 
-        import pdb;pdb.set_trace()
         if images_list[0].ndim == 3 and self.pad_image:
             max_shape = [img.shape for img in images_list]
             max_shape = np.array(max_shape).max(axis=0)

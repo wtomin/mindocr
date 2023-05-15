@@ -112,10 +112,6 @@ train:
           max_tries: 10
           min_crop_ratio: 0.1
           pad_if_needed: False
-      - ResizeShortestEdgeWithBBox:
-          short_edge_length: [800, 832, 864, 896, 1000, 1200, 1400]
-          max_size: 2333
-          sample_style: choice
       - IaaAugment:
           Fliplr: { p: 0.5 }
           Affine: { rotate: [ -10, 10 ] }
