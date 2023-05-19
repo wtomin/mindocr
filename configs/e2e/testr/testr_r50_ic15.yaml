@@ -13,12 +13,10 @@ model:
   backbone:
     name: det_masked_joiner_resnet50
     pretrained: True
+    hidden_size: 256
   neck:
     name: TESTRDeformableTransformer # Multi-Scale Deformable Attention
-    batch_size: 10
     num_levels: 4
-    src_seq_length: 1029 # 28*28+14*14+7*7
-    tgt_seq_length: 100
     hidden_size: 256
     num_heads: 8
     ffn_hidden_size: 1024
@@ -29,7 +27,6 @@ model:
     num_ctrl_points: 16 # the number of points in the polygon or bezier points
     dropout_rate: 0.1
     attention_dropout_rate: 0.0
-    hidden_dropout_rate: 0.0
     activation: relu
     pos_embed_scale: 6.283185307179586 #2 PI
     max_text_len: 25
@@ -46,7 +43,7 @@ model:
     aux_loss: True
     voc_size: 96
     hidden_size: 256
-
+  inputs_outputs_type: 1 # 0 for list, 1 for dict
 
 postprocess:
   name: DBPostprocess
@@ -99,17 +96,16 @@ train:
       - DecodeImage:
           img_mode: BGR
           to_float32: False
+      - RandomColorAdjust:
+          brightness: 0.1255  # 32.0 / 255
+          saturation: 0.5
       - TESTRLabelEncode:
           text_keyname: transcription
           polygon_keyname: polys # 16 ctrl points
           bbox_keyname: points
-      - RandomColorAdjust:
-          brightness: 0.1255  # 32.0 / 255
-          saturation: 0.5
-      - IaaAugment:
-          Resize: { size: [0.5, 3.0]}
-          Fliplr: { p: 0.5 }
-          Affine: { rotate: [ -10, 10 ] , p: 1.0} # be careful with rotatation. it may lead to the text out of the image, leading to no text annotations
+      - IaaAugment: 
+          Resize: { size: [0.5, 1.5]}
+          Fliplr: { p: 0.5 } 
       - RandomCropWithInstances:
           crop_size: [0.7, 0.7]
           crop_type: relative
@@ -130,9 +126,10 @@ train:
           std: imagenet
       - ToCHWImage:
     #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
-    output_columns: ['image', 'polys', 'boxes', 'texts','rec_ids', 'ignore_tags', 'gt_classes']
+    output_columns: ['image', 'image_mask', 'image_size', 'polys', 'boxes', 'rec_ids', 'ignore_tags', 'gt_classes']
     #output_keys: ['image'] # for debug op performance
-    num_keys_to_net: 2 # num inputs for network forward func in output_keys
+    net_input_column_index: [0, 1, 2] # num inputs for network forward func in output_keys
+    label_column_index: [ 2, 3, 4, 5, 6, 7]
 #    keys_for_loss: 4 # num labels for loss func
 
   loader:
@@ -141,6 +138,7 @@ train:
     drop_remainder: True
     max_rowsize: 32
     num_workers: 1 # TODO: may lead to OOM
+
 
 
 eval:

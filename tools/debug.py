@@ -3,7 +3,12 @@ Model training
 '''
 import sys
 import os
-
+import shutil
+# set logging level
+import logging
+logging.basicConfig(
+    level=os.environ.get('LOGLEVEL', 'INFO').upper()
+)
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
@@ -39,6 +44,7 @@ from mindocr.utils.train_step_wrapper import TrainOneStepWrapper
 from mindocr.utils.callbacks import EvalSaveCallback
 from mindocr.utils.seed import set_seed
 from mindocr.utils.loss_scaler import get_loss_scales
+from mindocr.utils.ema import EMA
 
 
 def main(cfg):
@@ -62,7 +68,7 @@ def main(cfg):
     is_main_device = rank_id in [None, 0]
 
     # create logger, only rank0 log will be output to the screen
-    logger = get_logger(log_dir=cfg.train.ckpt_save_dir, rank=rank_id if rank_id else 0, is_main_device=is_main_device)
+    logger = get_logger(log_dir=cfg.train.ckpt_save_dir, rank=rank_id)
 
     # create dataset
     loader_train = build_dataset(
@@ -73,6 +79,7 @@ def main(cfg):
         is_train=True,
     )
     num_batches = loader_train.get_dataset_size()
+
     loader_eval = None
     if cfg.system.val_while_train:
         loader_eval = build_dataset(
@@ -85,13 +92,23 @@ def main(cfg):
             )
 
     # create model
-    network = build_model(cfg.model)
-    ms.amp.auto_mixed_precision(network, amp_level=cfg.system.amp_level)
+    network = build_model(cfg.model,
+                          ckpt_load_path=cfg.model.pop('pretrained', None))
+
+    amp_level = cfg.system.get('amp_level', 'O0')
+    ms.amp.auto_mixed_precision(network, amp_level=amp_level)
 
     # create loss
     loss_fn = build_loss(cfg.loss.pop('name'), **cfg['loss'])
 
-    net_with_loss = NetWithLossWrapper(network, loss_fn)  # wrap train-one-step cell
+    net_with_loss = NetWithLossWrapper(network,
+                                       loss_fn,
+                                       pred_cast_fp32=(amp_level!='O0'),
+                                       input_indices=cfg.train.dataset.pop('net_input_column_index', None),
+                                       label_indices=cfg.train.dataset.pop('label_column_index', None),
+                                       column_names = cfg.train.dataset.get('output_columns', None),
+                                       inputs_outputs_type = cfg.model.get('inputs_outputs_type', None),
+                                    )  # wrap train-one-step cell
 
     # get loss scale setting for mixed precision training
     loss_scale_manager, optimizer_loss_scale = get_loss_scales(cfg)
@@ -107,6 +124,9 @@ def main(cfg):
     # build train step cell
     gradient_accumulation_steps = cfg.train.get('gradient_accumulation_steps', 1)
     clip_grad = cfg.train.get('clip_grad', False)
+    use_ema = cfg.train.get('ema', False)
+    ema = EMA(network, ema_decay=cfg.train.get('ema_decay', 0.9999), updates=0) if use_ema else None
+
     train_net = TrainOneStepWrapper(net_with_loss,
                                     optimizer=optimizer,
                                     scale_sense=loss_scale_manager,
@@ -114,7 +134,9 @@ def main(cfg):
                                     gradient_accumulation_steps=gradient_accumulation_steps,
                                     clip_grad=clip_grad,
                                     clip_norm=cfg.train.get('clip_norm', 1.0),
+                                    ema=ema,
                                     )
+
     # build postprocess and metric
     postprocessor = None
     metric = None
@@ -129,13 +151,17 @@ def main(cfg):
         loader_eval,
         postprocessor=postprocessor,
         metrics=[metric],
+        pred_cast_fp32=(amp_level!='O0'),
         rank_id=rank_id,
+        device_num=device_num,
         logger=logger,
         batch_size=cfg.train.loader.batch_size,
         ckpt_save_dir=cfg.train.ckpt_save_dir,
         main_indicator=cfg.metric.main_indicator,
-        num_columns_to_net=cfg.eval.dataset.get('num_columns_to_net', 1),
-        num_columns_of_labels=cfg.eval.dataset.get('num_columns_of_labels', None),
+        ema=ema,
+        input_indices=cfg.eval.dataset.pop('net_input_column_index', None),
+        label_indices=cfg.eval.dataset.pop('label_column_index', None),
+        meta_data_indices=cfg.eval.dataset.pop('meta_data_column_index', None),
         val_interval=cfg.system.get('val_interval', 1),
         val_start_epoch=cfg.system.get('val_start_epoch', 1),
         log_interval=cfg.system.get('log_interval', 100)
@@ -144,34 +170,40 @@ def main(cfg):
     # log
     num_devices = device_num if device_num is not None else 1
     global_batch_size = cfg.train.loader.batch_size * num_devices * gradient_accumulation_steps
-    logger.info('=' * 40)
+    model_name = cfg.model.name if 'name' in cfg.model else f'{cfg.model.backbone.name}-{cfg.model.neck.name}-{cfg.model.head.name}'
+    info_seg = '=' * 40
     logger.info(
-        f'Num devices: {num_devices}\n'
-        f'Batch size: {cfg.train.loader.batch_size}\n'
-        f'Global batch size: {cfg.train.loader.batch_size}x{num_devices}x{gradient_accumulation_steps}={global_batch_size}\n'
+        f'\n{info_seg}\n'
+        f'Distribute: {cfg.system.distribute}\n'
+        f'Model: {model_name}\n'
+        f'Data root: {cfg.train.dataset.dataset_root}\n'
         f'Optimizer: {cfg.optimizer.opt}\n'
-        f'Scheduler: {cfg.scheduler.scheduler}\n'
+        f'Weight decay: {cfg.optimizer.weight_decay} \n'
+        f'Batch size: {cfg.train.loader.batch_size}\n'
+        f'Num devices: {num_devices}\n'
+        f'Gradient accumulation steps: {gradient_accumulation_steps}\n'
+        f'Global batch size: {cfg.train.loader.batch_size}x{num_devices}x{gradient_accumulation_steps}={global_batch_size}\n'
         f'LR: {cfg.scheduler.lr} \n'
-        f'Auto mixed precision: {cfg.system.amp_level}\n'
-        f'Loss scale setting: {cfg.loss_scaler}\n'
-        f'drop_overflow_update: {cfg.system.drop_overflow_update}\n'
-        f'clip_grad: {clip_grad}\n'
+        f'Scheduler: {cfg.scheduler.scheduler}\n'
+        f'Steps per epoch: {num_batches}\n'
         f'Num epochs: {cfg.scheduler.num_epochs}\n'
-        f'Num steps per epoch: {num_batches}'
+        f'Clip gradient: {clip_grad}\n'
+        f'EMA: {use_ema}\n'
+        f'AMP level: {cfg.system.amp_level}\n'
+        f'Loss scaler: {cfg.loss_scaler}\n'
+        f'Drop overflow update: {cfg.system.drop_overflow_update}\n'
+        f'{info_seg}\n'
+        f'\nStart training... (The first epoch takes longer, please wait...)\n'
     )
-    if 'name' in cfg.model:
-        logger.info(f'Model: {cfg.model.name}')
-    else:
-        logger.info(f'Model: {cfg.model.backbone.name}-{cfg.model.neck.name}-{cfg.model.head.name}')
-    logger.info('=' * 40)
 
     # save args used for training
-    # FIXME: some values are popped and not saved.
     if is_main_device:
         with open(os.path.join(cfg.train.ckpt_save_dir, 'args.yaml'), 'w') as f:
             args_text = yaml.safe_dump(cfg.to_dict(), default_flow_style=False, sort_keys=False)
             f.write(args_text)
-
+    for x in loader_train:
+        print()
+        break
     # training
     model = ms.Model(train_net)
     model.train(cfg.scheduler.num_epochs, loader_train, callbacks=[eval_cb],
@@ -179,18 +211,31 @@ def main(cfg):
 
 
 if __name__ == '__main__':
+    # load and archive yaml config
     yaml_fp = args.config
     with open(yaml_fp) as fp:
         config = yaml.safe_load(fp)
     config = Dict(config)
 
+    ckpt_save_dir = config.train.ckpt_save_dir
+    os.makedirs(ckpt_save_dir, exist_ok=True)
+    shutil.copyfile(yaml_fp, os.path.join(ckpt_save_dir, 'train_config.yaml'))
+    
+    # data sync for modelarts
     if args.enable_modelarts:
         import moxing as mox
+        from ast import literal_eval
         from tools.modelarts_adapter.modelarts import get_device_id, sync_data
 
         dataset_root = '/cache/data/'
         # download dataset from server to local on device 0, other devices will wait until data sync finished.
-        sync_data(args.data_url, dataset_root)
+        if args.multi_data_url:
+            multi_data_url = literal_eval(args.multi_data_url)
+            for x in multi_data_url:
+                sync_data(x['dataset_url'], dataset_root)
+        else:
+            sync_data(args.data_url, dataset_root)
+
         if get_device_id() == 0:
             # mox.file.copy_parallel(src_url=args.data_url, dst_url=dataset_root)
             print(f'INFO: datasets found: {os.listdir(dataset_root)} \n'
@@ -204,7 +249,8 @@ if __name__ == '__main__':
 
     # main train and eval
     main(config)
-
+    
+    # model sync for modelarts 
     if args.enable_modelarts:
         # upload models from local to server
         if get_device_id() == 0:
