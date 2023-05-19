@@ -7,21 +7,22 @@ from mindspore import context
 from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype
 import mindspore.common.initializer as init
-from mindspore.common.initializer import XavierUniform, Uniform
-from mindspore._checkparam import Validator
+try:
+    from mindspore import _checkparam as validator
+except ImportError:
+    from mindspore._checkparam import Validator as validator
 from mindspore import log as logger
 from mindspore.parallel._utils import _get_parallel_mode, _is_sharding_propagation
 from mindspore.context import ParallelMode
 from mindspore.log import _LogActionOnce
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
-from mindspore.nn.transformer.layers import _LayerNorm, _Linear, \
-    _args_type_validator_check, _valid_type_checks, _valid_value_checks, \
-    _check_past_none_input_none, _check_input_dtype
-from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, _PipeLineConfig, OpParallelConfig, \
-    _Config, _check_config, MoEParallelConfig
-import mindspore.numpy as ms_np
-from mindspore import ms_function
+try:
+    from mindspore.parallel._transformer.layers import _args_type_validator_check, _valid_type_checks, _valid_value_checks
+    from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
+except ImportError:
+    from mindspore.nn.transformer.layers import _args_type_validator_check, _valid_type_checks, _valid_value_checks
+    from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
 
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
@@ -46,50 +47,34 @@ class MultiScaleDeformableAttention(nn.Cell):
     """
     @_LogActionOnce(logger=logger, key='MultiScaleDeformableAttention',
                     no_warning=_get_parallel_mode() in (ParallelMode.STAND_ALONE,))
-    @_args_type_validator_check(hidden_size=Validator.check_positive_int,
-                                num_heads=Validator.check_positive_int,
-                                #src_seq_length=Validator.check_positive_int,
-                                #tgt_seq_length=Validator.check_positive_int,
-                                attention_dropout_rate=Validator.check_non_negative_float,
-                                hidden_dropout_rate=Validator.check_non_negative_float,
-                                compute_dtype=_valid_value_checks([mstype.float32, mstype.float16],
-                                                                  "MultiScaleDeformableAttention"),
+    @_args_type_validator_check(hidden_size=validator.check_positive_int,
+                                num_heads=validator.check_positive_int,
+                                attention_dropout_rate=validator.check_non_negative_float,
                                 softmax_compute_type=_valid_value_checks([mstype.float32, mstype.float16],
                                                                          "MultiScaleDeformableAttention"),
                                 param_init_type=_valid_value_checks([mstype.float32, mstype.float16],
                                                                     "MultiScaleDeformableAttention"),
                                 parallel_config=_valid_type_checks([OpParallelConfig],
                                                                    "MultiScaleDeformableAttention"))
-    def __init__(
-        self, batch_size: int,
+    def __init__(self, 
         hidden_size: int,
         num_heads: int,
-        src_seq_length: Optional[int] = None,
-        tgt_seq_length: Optional[int] = None,
         num_levels: int = 4,
         num_points: int = 4,
-        hidden_dropout_rate=0.0,
         attention_dropout_rate=0.0,
-        compute_dtype=mstype.float32,
         softmax_compute_type=mstype.float32,
         param_init_type=mstype.float32,
         parallel_config=default_dpmp_config) -> None:
-        super(MultiScaleDeformableAttention, self).__init__()
+        super().__init__()
         self._is_ascend = context.get_context('device_target') in ["Ascend"]
         self.dp = parallel_config.data_parallel
         self.is_parallel_mode = _get_parallel_mode() in (
             ParallelMode.SEMI_AUTO_PARALLEL, ParallelMode.AUTO_PARALLEL)
-        if batch_size:
-            Validator.check_positive_int(batch_size)
+
         #if _get_parallel_mode() in (ParallelMode.AUTO_PARALLEL,) and _is_sharding_propagation():
         _check_config(parallel_config)
-        self.src_seq_length = src_seq_length
-        self.tgt_seq_length = tgt_seq_length
         self.hidden_size = hidden_size
-        self.batch_size = batch_size
-        if hidden_dropout_rate < 0 or hidden_dropout_rate >= 1:
-            raise ValueError("For 'MultiScaleDeformableAttention', the class variable 'hidden_dropout_rate' must be "
-                                "in range [0, 1.0), but got the value : {}.".format(hidden_dropout_rate))
+
         if attention_dropout_rate < 0 or attention_dropout_rate >= 1:
             raise ValueError("For 'MultiScaleDeformableAttention', the class variable 'attention_dropout_rate' must be "
                                 "in range [0, 1.0), but got the value : {}.".format(attention_dropout_rate))
@@ -109,7 +94,6 @@ class MultiScaleDeformableAttention(nn.Cell):
         self.multiply_data = Tensor([
             -10000.0,
         ], dtype=softmax_compute_type)
-        self.dropout = nn.Dropout(keep_prob=1 - hidden_dropout_rate)
         self.prob_dropout = nn.Dropout(keep_prob= 1 - attention_dropout_rate)
 
         self.cos = P.Cos()
@@ -126,7 +110,6 @@ class MultiScaleDeformableAttention(nn.Cell):
         self.num_heads = num_heads
         self.num_levels = num_levels
         self.num_points = num_points
-        self.dtype = compute_dtype
         self.param_init_type = param_init_type
 
         self.sampling_offsets = nn.Dense(hidden_size, num_heads * num_levels * num_points *2)
@@ -138,10 +121,10 @@ class MultiScaleDeformableAttention(nn.Cell):
         
         pshape, dtype = self.sampling_offsets.weight.shape, self.sampling_offsets.weight.dtype
         self.sampling_offsets.weight.set_data(init.initializer('zeros', pshape, dtype))
-
-        thetas = ops.arange(self.num_heads, dtype=self.param_init_type) * (2.0 * math.pi / self.num_heads)
+        
+        thetas = ops.range(Tensor(0, mstype.int32), Tensor(self.num_heads, mstype.int32), Tensor(1, mstype.int32)) * (2.0 * math.pi / self.num_heads)
         grid_init = ops.stack([self.cos(thetas), self.sin(thetas)], axis=-1)
-        grid_init = grid_init  / ms_np.amax(ops.abs(grid_init), axis=-1, keepdims=True)
+        grid_init = grid_init  / ops.abs(grid_init).max(-1, keepdims=True)
         grid_init = grid_init.reshape((self.num_heads, 1, 1, 2))
         grid_init = ops.repeat_elements(grid_init, self.num_levels, axis=1)
         grid_init = ops.repeat_elements(grid_init, self.num_points, axis=2)
@@ -165,8 +148,7 @@ class MultiScaleDeformableAttention(nn.Cell):
         query: Tensor,
         key: Optional[Tensor] = None,  # not used in deformable-attn, for good layout
         value: Optional[Tensor] = None,
-        query_pos: Optional[Tensor] = None,
-        key_padding_mask: Optional[Tensor] = None,
+        value_padding_mask: Optional[Tensor] = None,
         reference_points: Optional[Tensor] = None,
         spatial_shapes: Optional[List[Tuple[int, int]]] = None,
         level_start_index: Optional[Tensor] = None,
@@ -186,47 +168,39 @@ class MultiScaleDeformableAttention(nn.Cell):
             identity (Tensor): The tensor used for addition, with the
                 same shape as `query`. Default: None. If None, `query` will be
                 used.
-            query_pos (Tensor): The position embedding for `query`. Default: None.
-            key_padding_mask (Tensor): ByteTensor for `query`, with shape `(bs, num_key)`,
-                indicating which elements within `key` to be ignored in attention.
+            value_padding_mask (Tensor): ByteTensor for `value`,
+                indicating which elements within `value` to be ignored in attention.
             reference_points (Tensor): The normalized reference points
                 with shape `(bs, num_query, num_levels, 2)`,
                 all elements is range in [0, 1], top-left (0, 0),
                 bottom-right (1, 1), including padding are.
-                or `(N, Length_{query}, num_levels, 4)`, add additional
+                or `(N, LengtH{query}, num_levels, 4)`, add additional
                 two dimensions `(h, w)` to form reference boxes.
             spatial_shapes (List[Tuple[int, int]]): Spatial shape of features in different levels.
                 With shape `(num_levels, 2)`, last dimension represents `(h, w)`.
             level_start_index (Tensor): The start index of each level. A tensor with
                 shape `(num_levels, )` which can be represented as
-                `[0, h_0 * w_0, h_0 * w_0 + h_1 * w_1, ...]`.
+                `[0, H0 * W0, H0 * W0 + H1 * W1, ...]`.
 
         Returns:
             Tensor: forward results with shape `(num_query, bs, hidden_size)`
         """
         # self._check_inputs()
-        ori_dtype = F.dtype(query)
-        query = F.cast(query, self.dtype)
 
         if value is None:
             value = query
-        value = F.cast(value, self.dtype)
-        if query_pos is not None:
-            query_pos =  F.cast(query_pos, self.dtype)
-            query = query + query_pos
         
-        bs = self.batch_size
-        _, num_query, _ = query.shape
-        _, num_value, _ = value.shape
+        bs, num_query, _ = query.shape
+        bs, num_value, _ = value.shape
         # assert query.shape[0] == bs and value.shape[0] == bs
         # assert  (spatial_shapes.asnumpy()[:, 0] * spatial_shapes.asnumpy()[:, 1]).sum() == num_value
-        # assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value, f"expect num_value {num_value} to be sum of spatial_shapes"
 
         value = self.value_proj(value)
-        if key_padding_mask is not None:
-            value = value.masked_fill(key_padding_mask[..., None], float(0))
-        value = value.view(bs, num_value, self.num_heads, -1)  # (bs, sum(hw), num_head, head_dim)
-
+        if value_padding_mask is not None:
+            value = value.masked_fill(value_padding_mask[..., None], float(0))
+        value = value.reshape((bs, num_value, self.num_heads, self.hidden_size//self.num_heads))  # (bs, sum(hw), num_head, head_dim)
+        
         sampling_offsets = self.sampling_offsets(query).view(
             bs, num_query, self.num_heads, self.num_levels, self.num_points, 2
         )
@@ -239,14 +213,13 @@ class MultiScaleDeformableAttention(nn.Cell):
         attention_weights = attention_weights.view(bs, num_query, self.num_heads, self.num_levels, self.num_points)
 
         if reference_points.shape[-1] == 2:
-            spatial_shapes_array = ms_np.array(spatial_shapes)
-            offset_normalizer = ops.stack([spatial_shapes_array[:, 1], spatial_shapes_array[:, 0]] ,axis=-1)  # (num_level, 2)
+            offset_normalizer = spatial_shapes[:, ::-1]  # (num_level, 2)
             normalized_offsets = sampling_offsets / offset_normalizer.view(1, 1, 1, -1, 1, 2)
             sampling_locations = reference_points.view(bs, num_query, 1, -1, 1, 2) + normalized_offsets
               # (bs, sum(hw), num_heads, num_levels, num_points, 2)
         elif reference_points.shape[-1] == 4:
             # modulate xy offset by hw
-            sampling_locations = reference_points.view(bs, num_query, 1, -1, 1, 4)[...,:2] + sampling_offsets / self.num_points * reference_points[:, :, None, :, None, 2:] * 0.5
+            sampling_locations = reference_points.view(bs, num_query, 1, -1, 1, 4)[...,:2] + sampling_offsets / self.num_points * reference_points.view(bs, num_query, 1, -1, 1, 4)[...,:2] * 0.5
         else:
             raise ValueError(
                 "Last dim of reference_points must be 2 or 4, but get {} instead.".format(reference_points.shape[-1])
@@ -267,8 +240,6 @@ class MultiScaleDeformableAttention(nn.Cell):
         )
 
         output = self.output_proj(output)
-        output = self.dropout(output) 
-        output = F.cast(output, ori_dtype)
         return output
 
 
@@ -291,14 +262,14 @@ def multi_scale_deformable_attn(
     value_list.append(value[:, level_start_index[-1]:, ...])
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
-    # value_spatial_shapes_list = value_spatial_shapes.asnumpy().tolist()
-    for level, (H_, W_) in enumerate(value_spatial_shapes):
-        # bs, H_*W_, num_heads, head_hidden_sizes ->
-        # bs, H_*W_, num_heads*head_hidden_sizes ->
-        # bs, num_heads*head_hidden_sizes, H_*W_ ->
-        # bs*num_heads, head_hidden_sizes, H_, W_
+    value_spatial_shapes_list = value_spatial_shapes.asnumpy().tolist()
+    for level, (H, W) in enumerate(value_spatial_shapes_list):
+        # bs, H*W, num_heads, head_hidden_sizes ->
+        # bs, H*W, num_heads*head_hidden_sizes ->
+        # bs, num_heads*head_hidden_sizes, H*W ->
+        # bs*num_heads, head_hidden_sizes, H, W
         value_l_ = (
-            value_list[level].reshape(bs, H_ * W_, -1).transpose((0, 2, 1)).reshape(bs * num_heads, head_hidden_sizes, H_, W_)
+            value_list[level].view(bs, int(H * W), -1).transpose((0, 2, 1)).view(bs * num_heads, head_hidden_sizes, H, W)
         )
         # bs, num_queries, num_heads, num_points, 2 ->
         # bs, num_heads, num_queries, num_points, 2 ->
@@ -307,7 +278,7 @@ def multi_scale_deformable_attn(
             bs * num_heads, num_queries, num_points, 2)
         # bs*num_heads, head_hidden_sizes, num_queries, num_points
         sampling_value_l_ = ops.grid_sample(
-            value_l_, sampling_grid_l_, interpolation_mode="bilinear", padding_mode="zeros", align_corners=False
+            value_l_, sampling_grid_l_, "bilinear", padding_mode="zeros", align_corners=False
         )
         sampling_value_list.append(sampling_value_l_)
     # (bs, num_queries, num_heads, num_levels, num_points) ->
@@ -328,4 +299,5 @@ def multi_scale_deformable_attn(
         .view(bs, num_heads * head_hidden_sizes, num_queries)
     )
     # (bs, num_queries, hidden_sizes)  hidden_sizes = num_heads*head_hidden_sizes
+
     return output.transpose((0, 2, 1))

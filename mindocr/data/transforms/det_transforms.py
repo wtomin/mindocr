@@ -12,6 +12,7 @@ import numpy as np
 
 __all__ = ['DetLabelEncode', 'TESTRLabelEncode',  'PadTESTRLabel', 'BorderMap', 'ShrinkBinaryMap', 'expand_poly']
 
+
 class TESTRLabelEncode:
     def __init__(self, text_keyname='transcription', bbox_keyname='points', 
                  polygon_keyname = 'polys'):
@@ -66,8 +67,6 @@ class TESTRLabelEncode:
                 txt_tags.append(False)
         if len(boxes) == 0:
             return None
-        # boxes = self.expand_points_num(boxes)
-        # polys = self.expand_points_num(polys)
         boxes = np.array(boxes, dtype=np.float32)
         polys = np.array(polys, dtype=np.float32)
         rec_ids = np.array(rec_ids, dtype=np.int32)
@@ -93,17 +92,17 @@ class PadTESTRLabel:
         else:
             for key in self._affect_keys:
                 if key == 'polys':
-                    data['polys'] = np.concatenate([data['polys'], np.zeros((self.target_len-nBox, 16, 3), dtype=np.float32)], axis=0)
+                    data['polys'] = np.concatenate([data['polys'].astype(np.float32), np.zeros((self.target_len-nBox, 16, 3), dtype=np.float32)], axis=0)
                 elif key == 'boxes':
-                    data['boxes'] = np.concatenate([data['boxes'], np.zeros((self.target_len-nBox, 4, 2), dtype=np.float32)], axis=0)
+                    data['boxes'] = np.concatenate([data['boxes'].astype(np.float32), np.zeros((self.target_len-nBox, 4, 2), dtype=np.float32)], axis=0)
                 elif key == 'texts':
                     data['texts'] = data['texts'] + ['###']*(self.target_len-nBox)
                 elif    key == 'rec_ids':
-                    data['rec_ids'] = np.concatenate([data['rec_ids'], 96*np.ones((self.target_len-nBox, 25), dtype=np.int32)], axis=0)
+                    data['rec_ids'] = np.concatenate([data['rec_ids'].astype(np.int32), 96*np.ones((self.target_len-nBox, 25), dtype=np.int32)], axis=0)
                 elif key == 'ignore_tags':
                     data['ignore_tags'] = np.concatenate([data['ignore_tags'], np.ones((self.target_len-nBox), dtype=bool)], axis=0)
                 elif key == 'gt_classes':
-                    data['gt_classes'] = np.concatenate([data['gt_classes'], np.ones((self.target_len-nBox), dtype=np.int32)], axis=0)
+                    data['gt_classes'] = np.concatenate([data['gt_classes'].astype(np.int32), np.ones((self.target_len-nBox), dtype=np.int32)], axis=0)
         for key in self._affect_keys:
             assert len(data[key]) == self.target_len, "length of {} should be {}".format(key, self.target_len)
         return data

@@ -50,7 +50,6 @@ def testr_r50(pretrained=False, **kwargs):
                 "num_ctrl_points": 16,
                 "dropout_rate": 0.1,
                 "attention_dropout_rate": 0.0,
-                "hidden_dropout_rate": 0.0,
                 "activation": "relu",
                 "pos_embed_scale": 6.283185307179586, #2 PI
                 "max_text_len": 25,

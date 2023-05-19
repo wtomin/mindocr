@@ -63,30 +63,27 @@ class CtrlPointHungarianMatcher(nn.Cell):
         bs, num_queries = outputs["pred_logits"].shape[:2]
 
         # We flatten to compute the cost matrices in a batch
-        out_prob = self.sigmoid(outputs["pred_logits"].reshape(bs * num_queries, -1))
+        out_prob = self.sigmoid(outputs["pred_logits"].reshape(bs * num_queries, -1, 1))
         # [batch_size, n_queries, n_points, 2] --> [batch_size * num_queries, n_points * 2]
         out_pts = outputs["pred_ctrl_points"].reshape((bs * num_queries, -1))
 
         # Also concat the target labels and boxes
-        tgt_pts_list = [v["ctrl_points"] for v in targets]
-        tgt_pts = ops.Concat(axis=-2)(tgt_pts_list)
-        tgt_pts = tgt_pts.reshape(-1, tgt_pts_list[0].shape[-1])
-
+        tgt_pts_list = [v["ctrl_points"][:, :, :2] for v in targets]
+        tgt_pts = ops.concat(tgt_pts_list, axis=0).reshape(-1, tgt_pts_list[0].shape[-2]* tgt_pts_list[0].shape[-1])
+        tgt_pts_vis_list = [v["ctrl_points"][:, :, 2:] for v in targets]
+        tgt_pts_vis = ops.concat(tgt_pts_vis_list, axis=0).reshape(-1, tgt_pts_vis_list[0].shape[-2]* tgt_pts_vis_list[0].shape[-1]) # it seems the contrl points are not used in cost matrix
         neg_cost_class = (1 - self.alpha) * (out_prob ** self.gamma) * \
             (-(1 - out_prob + 1e-8).log())
         pos_cost_class = self.alpha * ((1 - out_prob) ** self.gamma) * (-(out_prob + 1e-8).log())
-        cost_class = pos_cost_class[..., 0] - neg_cost_class[..., 0]
-        cost_class = cost_class.reshape((bs, num_queries, -1))
+        cost_class = (pos_cost_class[..., 0] - neg_cost_class[..., 0]).mean(-1, keep_dims=True)
 
-        cost_kpts = ops.cdist(out_pts, tgt_pts, p=1)
-        cost_kpts = cost_kpts.reshape((bs, num_queries, -1))
-
+        cost_kpts = ops.cdist(out_pts, tgt_pts, p=1.0)
         C = self.class_weight * cost_class + self.coord_weight * cost_kpts
         C = C.view(bs, num_queries, -1)
 
         sizes = [len(v["ctrl_points"]) for v in targets]
         indices_list = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(Tensor(i), Tensor(j)) for i, j in indices_list]
+        return [(Tensor(i, mstype.int64), Tensor(j, mstype.int64)) for i, j in indices_list]
 
 
 
@@ -170,7 +167,7 @@ class BoxHungarianMatcher(nn.Cell):
         sizes = [len(v["boxes"]) for v in targets]
         indices = [linear_sum_assignment(
             c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(Tensor(i), Tensor(j)) for i, j in indices]
+        return [(Tensor(i, mstype.int64), Tensor(j, mstype.int64)) for i, j in indices]
 
 def build_matcher(cfg):
     cfg = cfg.MODEL.TRANSFORMER.LOSS

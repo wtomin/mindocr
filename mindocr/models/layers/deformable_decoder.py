@@ -6,52 +6,45 @@ import math
 import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype 
-from mindspore._checkparam import Validator
+try:
+    from mindspore import _checkparam as validator
+except ImportError:
+    from mindspore._checkparam import Validator as validator
 from mindspore.parallel._utils import _get_parallel_mode, _is_sharding_propagation
 from mindspore.context import ParallelMode
-from mindspore.log import _LogActionOnce
-from mindspore.nn.transformer.layers import _LayerNorm, _Linear, \
-    _args_type_validator_check, _valid_type_checks, _valid_value_checks, \
-    _check_past_none_input_none, _check_input_dtype
-from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, _PipeLineConfig, OpParallelConfig, \
-    _Config, _check_config, MoEParallelConfig
+try:
+    from mindspore.parallel._transformer.layers import _args_type_validator_check, _valid_type_checks, _valid_value_checks
+    from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
+except ImportError:
+    from mindspore.nn.transformer.layers import _args_type_validator_check, _valid_type_checks, _valid_value_checks
+    from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
 
 from mindocr.utils.misc import inverse_sigmoid, _get_clones
-
+from mindspore.nn.layer.transformer import MultiheadAttention # >=mindspore2.0.0rc1
 class DeformableCompositeTransformerDecoderLayer(nn.Cell):
-    @_args_type_validator_check(hidden_size=Validator.check_positive_int,
-                                num_heads=Validator.check_positive_int,
-                                num_levels=Validator.check_positive_int,
-                                num_points=Validator.check_positive_int,
-                                ffn_hidden_size=Validator.check_positive_int,
-                                src_seq_length=Validator.check_positive_int,
-                                tgt_seq_length=Validator.check_positive_int,
-                                attention_dropout_rate=Validator.check_non_negative_float,
-                                hidden_dropout_rate=Validator.check_non_negative_float,
-                                layernorm_compute_type=_valid_value_checks([mstype.float32, mstype.float16],
-                                                                           "DeformableCompositeTransformerDecoderLayer"),
+    @_args_type_validator_check(hidden_size=validator.check_positive_int,
+                                num_heads=validator.check_positive_int,
+                                num_levels=validator.check_positive_int,
+                                num_points=validator.check_positive_int,
+                                ffn_hidden_size=validator.check_positive_int,
+                                attention_dropout_rate=validator.check_non_negative_float,
                                 softmax_compute_type=_valid_value_checks([mstype.float32, mstype.float16],
                                                                          "DeformableCompositeTransformerDecoderLayer"),
                                 param_init_type=_valid_value_checks([mstype.float32, mstype.float16],
                                                                     "DeformableCompositeTransformerDecoderLayer"),
                                 parallel_config=_valid_type_checks([OpParallelConfig, MoEParallelConfig],
                                                                    "DeformableCompositeTransformerDecoderLayer"))
-    def __init__(self, batch_size: int,
+    def __init__(self, 
                  hidden_size: int, 
                  ffn_hidden_size: int,
-                 src_seq_length:int,
-                 tgt_seq_length:int,
                  num_levels:int=4, 
                  num_heads:int=8, 
                  num_points:int=4,
                  dropout_rate: float = 0.0,
                  attention_dropout_rate: float = 0.0,
-                 hidden_dropout_rate: float = 0.0, 
                  activation: str = "relu", 
-                 layernorm_compute_type: mstype.number = mstype.float32,
                  softmax_compute_type: mstype.number = mstype.float32,
                  param_init_type: mstype.number = mstype.float32,
-                 compute_dtype: mstype.number = mstype.float32,
                  parallel_config = default_dpmp_config) -> None:
         """
         Args:
@@ -64,9 +57,6 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         num_points (int): number of sampling points of Deformalbe ATtention, defaults to 4
         """
         super().__init__()
-        if batch_size:
-            Validator.check_positive_int(batch_size)
-        self.batch_size = batch_size
         if _get_parallel_mode() in (ParallelMode.AUTO_PARALLEL,) and _is_sharding_propagation():
             _check_config(parallel_config)
             if num_heads % parallel_config.model_parallel != 0:
@@ -90,36 +80,24 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         self.num_levels = num_levels
         self.num_heads = num_heads
         self.num_points = num_points
-        
         # cross attention
-        self.attn_cross = MultiScaleDeformableAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
+        self.attn_cross = MultiScaleDeformableAttention( hidden_size=hidden_size,
                                                num_heads=num_heads, num_points=num_points, num_levels=num_levels,
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
+                                               attention_dropout_rate=attention_dropout_rate, softmax_compute_type=softmax_compute_type,
                                                param_init_type=param_init_type, parallel_config=parallel_config)
         
         self.dropout_cross = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_cross = nn.LayerNorm((hidden_size,), epsilon=1e-5)
         
         # self attention (intra)
-        self.attn_intra = nn.MultiHeadAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
-                                               num_heads=num_heads, 
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
-                                               param_init_type=param_init_type, parallel_config=parallel_config)
+        
+        self.attn_intra = MultiheadAttention(hidden_size, num_heads, dropout=attention_dropout_rate, batch_first=True)
         
         self.dropout_intra = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_intra = nn.LayerNorm((hidden_size,), epsilon=1e-5)
 
         # self attention (inter)
-        self.attn_inter = nn.MultiHeadAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
-                                               num_heads=num_heads, 
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
-                                               param_init_type=param_init_type, parallel_config=parallel_config)
+        self.attn_inter = MultiheadAttention(hidden_size, num_heads,  dropout=attention_dropout_rate, batch_first=True)
         
         self.dropout_inter = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_inter = nn.LayerNorm((hidden_size,), epsilon=1e-5)
@@ -134,31 +112,19 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         ## (factorized) attn for text branch
         ## TODO: different embedding dim for text/loc?
         # attention between text embeddings belonging to the same object query
-        self.attn_intra_text = nn.MultiHeadAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
-                                               num_heads=num_heads, 
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
-                                               param_init_type=param_init_type, parallel_config=parallel_config)
+        self.attn_intra_text = MultiheadAttention(hidden_size, num_heads,  dropout=attention_dropout_rate, batch_first=True)
         self.dropout_intra_text = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_intra_text = nn.LayerNorm((hidden_size,), epsilon=1e-5)
 
         # attention between text embeddings on the same spatial position of different objects
-        self.attn_inter_text = nn.MultiHeadAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
-                                               num_heads=num_heads, 
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
-                                               param_init_type=param_init_type, parallel_config=parallel_config)
+        self.attn_inter_text = MultiheadAttention(hidden_size, num_heads,  dropout=attention_dropout_rate, batch_first=True)
         self.dropout_inter_text = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_inter_text = nn.LayerNorm((hidden_size,), epsilon=1e-5)
 
         # cross attention for text
-        self.attn_cross_text = MultiScaleDeformableAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
+        self.attn_cross_text = MultiScaleDeformableAttention( hidden_size=hidden_size,
                                                num_heads=num_heads, num_points=num_points, num_levels=num_levels,
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
+                                               attention_dropout_rate=attention_dropout_rate, softmax_compute_type=softmax_compute_type,
                                                param_init_type=param_init_type, parallel_config=parallel_config)
         self.dropout_cross_text = nn.Dropout(keep_prob=1-dropout_rate)
         self.norm_cross_text = nn.LayerNorm((hidden_size,), epsilon=1e-5)
@@ -176,13 +142,13 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
                        pos: Tensor):
         return tensor if pos is None else tensor + pos
 
-    def forwarffn_hidden_size(self, tgt):
+    def ffn(self, tgt):
         tgt2 = self.linear2(self.dropout3(self.linear1(tgt)))
         tgt = tgt + self.dropout4(tgt2)
         tgt = self.norm3(tgt)
         return tgt
 
-    def forwarffn_hidden_size_text(self, tgt):
+    def ffn_text(self, tgt):
         tgt2 = self.linear2_text(self.dropout3_text(self.linear1_text(tgt)))
         tgt = tgt + self.dropout4_text(tgt2)
         tgt = self.norm3_text(tgt)
@@ -227,56 +193,62 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         tgt = tgt + self.dropout_intra(tgt2)
         tgt = self.norm_intra(tgt)
 
-        q_inter = k_inter = tgt_inter = ops.swapdims(tgt, 1, 2)
-        tgt2_inter = self.attn_inter(q_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)), 
-                               k_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)),  
-                               tgt_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)))[0]
-        tgt2_inter = tgt2_inter.transpose((1, 0, 2)).reshape((bs, n_objects, num_points, embed_dim))
+        q_inter = k_inter = tgt_inter = ops.swapdims(tgt, 1, 2) # swap n_objects and num_points -> (bs, num_points, n_objects, embed_dim)
+        tgt2_inter = self.attn_inter(q_inter.reshape((bs *num_points,  n_objects, embed_dim)).transpose((1, 0, 2)), 
+                               k_inter.reshape((bs *num_points,  n_objects, embed_dim)).transpose((1, 0, 2)),  
+                               tgt_inter.reshape((bs *num_points,  n_objects, embed_dim)).transpose((1, 0, 2)))[0]
+        tgt2_inter = tgt2_inter.transpose((1, 0, 2)).reshape((bs, num_points, n_objects, embed_dim))
         tgt_inter = tgt_inter + self.dropout_inter(tgt2_inter)
-        tgt_inter = ops.swapdims(self.norm_inter(tgt_inter), 1, 2)
+        tgt_inter = ops.swapdims(self.norm_inter(tgt_inter), 1, 2) # -> (bs, n_objects, num_points, embed_dim)
 
         # cross attention
-        reference_points_loc = ops.repeat_elements(reference_points[:, :, None, : ,: ], tgt_inter.shape[2], axis=2)
+        reference_points_loc = ops.repeat_elements(reference_points.unsqueeze(2), tgt_inter.shape[2], axis=2)
         tgt2 = self.attn_cross(self.with_pos_embed(tgt_inter, query_pos).reshape((bs, n_objects * num_points, embed_dim)),
-                               reference_points_loc.reshape((bs, -1, reference_points_loc.shape[3], reference_points_loc.shape[4])),
-                               src, src_spatial_shapes, level_start_index, src_padding_mask).reshape(tgt_inter.shape)
+                               key = None, value = src,
+                               value_padding_mask = src_padding_mask, 
+                               reference_points= reference_points_loc.reshape((bs, -1, reference_points_loc.shape[3], reference_points_loc.shape[4])),
+                               spatial_shapes = src_spatial_shapes, 
+                               level_start_index = level_start_index).reshape(tgt_inter.shape)
         tgt_inter = tgt_inter + self.dropout_cross(tgt2)
         tgt = self.norm_cross(tgt_inter)
 
         # text branch - intra self attn (word-wise)
-        q_text = k_text = self.with_pos_embed(tgt_text, query_pos)
-        bs, n_objects, num_points, embed_dim = q_text.shape
-        tgt2_text = self.attn_intra_text(q_text.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)), 
-                            k_text.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)),  
-                            tgt_text.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)),
-                            text_padding_mask.reshape((bs * n_objects, num_points, embed_dim)) if text_padding_mask is not None else None
+        q_text = k_text = self.with_pos_embed(tgt_text, query_pos_text)
+        bs, n_objects, num_chars, embed_dim = q_text.shape
+        tgt2_text = self.attn_intra_text(q_text.reshape((bs * n_objects, num_chars, embed_dim)).transpose((1, 0, 2)), 
+                            k_text.reshape((bs * n_objects, num_chars, embed_dim)).transpose((1, 0, 2)),  
+                            tgt_text.reshape((bs * n_objects, num_chars, embed_dim)).transpose((1, 0, 2)),
+                            text_padding_mask.reshape((bs * n_objects, num_chars, embed_dim)) if text_padding_mask is not None else None
                             )[0]
-        tgt2_text = tgt2_text.transpose((1, 0, 2)).reshape((bs, n_objects, num_points, embed_dim))
+        tgt2_text = tgt2_text.transpose((1, 0, 2)).reshape((bs, n_objects, num_chars, embed_dim))
         tgt_text = tgt_text + self.dropout_intra_text(tgt2_text)
         tgt_text = self.norm_intra_text(tgt_text)
          
         # text branch - intra self attn (object-wise)
-        q_text_inter = k_text_inter = tgt_text_inter = ops.swapdims(tgt_text, 1, 2)
-        tgt2_text_inter = self.attn_inter_text(q_text_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)), 
-                            k_text_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)),  
-                            tgt_text_inter.reshape((bs * n_objects, num_points, embed_dim)).transpose((1, 0, 2)),
-                            text_padding_mask.reshape((bs * n_objects, num_points, embed_dim)) if text_padding_mask is not None else None
+        q_text_inter = k_text_inter = tgt_text_inter = ops.swapdims(tgt_text, 1, 2) # swap n_objects and num_chars -> (bs, num_chars, n_objects, embed_dim)
+        tgt2_text_inter = self.attn_inter_text(q_text_inter.reshape((bs * num_chars, n_objects, embed_dim)).transpose((1, 0, 2)), 
+                            k_text_inter.reshape((bs * num_chars, n_objects, embed_dim)).transpose((1, 0, 2)),  
+                            tgt_text_inter.reshape((bs * num_chars, n_objects, embed_dim)).transpose((1, 0, 2)),
+                            text_padding_mask.reshape((bs * num_chars, n_objects, embed_dim)) if text_padding_mask is not None else None
                             )[0]
-        tgt2_text_inter = tgt2_text_inter.transpose((1, 0, 2)).reshape((bs, n_objects, num_points, embed_dim))
+        tgt2_text_inter = tgt2_text_inter.transpose((1, 0, 2)).reshape(q_text_inter.shape) # -> (bs, num_chars, n_objects, embed_dim)
         tgt_text_inter = tgt_text_inter + self.dropout_inter_text(tgt2_text_inter)
         tgt_text_inter = ops.swapdims(self.norm_inter_text(tgt_text_inter), 1, 2)
 
         # text branch - cross attention
-        reference_points_loc = ops.repeat_elements(reference_points[:, :, None, : ,: ], tgt_text_inter.shape[2], axis=2)
-        tgt2_text_cm = self.attn_cross_text(self.with_pos_embed(tgt_text_inter, query_pos_text).reshape((bs, n_objects * num_points, embed_dim)),
-                            reference_points_loc.reshape((bs, -1, reference_points_loc.shape[3], reference_points_loc.shape[4])),
-                            src, src_spatial_shapes, level_start_index, src_padding_mask).reshape(tgt_text_inter.shape)
+        reference_points_loc = ops.repeat_elements(reference_points.unsqueeze(2), tgt_text_inter.shape[2], axis=2)
+        tgt2_text_cm = self.attn_cross_text(self.with_pos_embed(tgt_text_inter, query_pos_text).reshape((bs, n_objects * num_chars, embed_dim)),
+                            key = None, value = src,
+                            value_padding_mask = src_padding_mask,
+                            reference_points = reference_points_loc.reshape((bs, -1, reference_points_loc.shape[3], reference_points_loc.shape[4])),
+                            spatial_shapes = src_spatial_shapes, 
+                            level_start_index = level_start_index).reshape(tgt_text_inter.shape)
         tgt_text_inter = tgt_text_inter + self.dropout_cross_text(tgt2_text_cm)
         tgt_text = self.norm_cross_text(tgt_text_inter)
 
         # ffn
-        tgt = self.forwarffn_hidden_size(tgt)
-        tgt_text = self.forwarffn_hidden_size_text(tgt_text)
+        tgt = self.ffn(tgt)
+        tgt_text = self.ffn_text(tgt_text)
 
         return tgt, tgt_text
 
@@ -401,15 +373,12 @@ class DeformableTransformerDecoderLayer(nn.Cell):
     Outputs:
         Tensor of shape [batch_size, target_length, hidden_size].
     """
-    @_args_type_validator_check(hidden_size=Validator.check_positive_int,
-                                num_heads=Validator.check_positive_int,
-                                num_levels=Validator.check_positive_int,
-                                num_points=Validator.check_positive_int,
-                                ffn_hidden_size=Validator.check_positive_int,
-                                attention_dropout_rate=Validator.check_non_negative_float,
-                                hidden_dropout_rate=Validator.check_non_negative_float,
-                                layernorm_compute_type=_valid_value_checks([mstype.float32, mstype.float16],
-                                                                           "DeformableTransformerDecoderLayer"),
+    @_args_type_validator_check(hidden_size=validator.check_positive_int,
+                                num_heads=validator.check_positive_int,
+                                num_levels=validator.check_positive_int,
+                                num_points=validator.check_positive_int,
+                                ffn_hidden_size=validator.check_positive_int,
+                                attention_dropout_rate=validator.check_non_negative_float,
                                 softmax_compute_type=_valid_value_checks([mstype.float32, mstype.float16],
                                                                          "DeformableTransformerDecoderLayer"),
                                 param_init_type=_valid_value_checks([mstype.float32, mstype.float16],
@@ -417,42 +386,29 @@ class DeformableTransformerDecoderLayer(nn.Cell):
                                 parallel_config=_valid_type_checks([OpParallelConfig, MoEParallelConfig],
                                                                    "DeformableTransformerDecoderLayer"))
     def __init__(self, 
-                 batch_size: int,
                  hidden_size: int, 
                  ffn_hidden_size: int,
-                 src_seq_length:int,
-                 tgt_seq_length:int,
                  num_levels:int=4, 
                  num_heads:int=8, 
                  num_points:int=4,
                  dropout_rate: float = 0.0,
                  attention_dropout_rate: float = 0.0,
-                 hidden_dropout_rate: float = 0.0, 
                  activation: str = "relu", 
-                 layernorm_compute_type: mstype.number = mstype.float32,
                  softmax_compute_type: mstype.number = mstype.float32,
                  param_init_type: mstype.number = mstype.float32,
-                 compute_dtype: mstype.number = mstype.float32,
                  parallel_config = default_dpmp_config) -> None:
         super().__init__()
 
         # cross attention
-        self.cross_attn = MultiScaleDeformableAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
+        self.cross_attn = MultiScaleDeformableAttention(hidden_size=hidden_size,
                                                num_heads=num_heads, num_points=num_points, num_levels=num_levels,
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
+                                               attention_dropout_rate=attention_dropout_rate, softmax_compute_type=softmax_compute_type,
                                                param_init_type=param_init_type, parallel_config=parallel_config)
         self.dropout1 = nn.Dropout(1 - dropout_rate)
         self.norm1 = nn.LayerNorm((hidden_size,), epsilon=1e-5)
 
         # self attention
-        self.self_attn =  nn.MultiHeadAttention(batch_size = batch_size, src_seq_length = src_seq_length, 
-                                               tgt_seq_length = tgt_seq_length, hidden_size=hidden_size,
-                                               num_heads=num_heads, 
-                                               hidden_dropout_rate=hidden_dropout_rate, attention_dropout_rate=attention_dropout_rate,
-                                               compute_dtype=compute_dtype, softmax_compute_type=softmax_compute_type,
-                                               param_init_type=param_init_type, parallel_config=parallel_config)
+        self.self_attn =  MultiheadAttention(hidden_size, num_heads,  dropout=attention_dropout_rate, batch_first=True)
         self.dropout2 = nn.Dropout(1 - dropout_rate)
         self.norm2 = nn.LayerNorm((hidden_size,), epsilon=1e-5)
 
@@ -590,7 +546,7 @@ class DeformableTransformerDecoder(nn.Cell):
         if self.return_intermediate:
             return ops.stack(intermediate, axis=0), ops.stack(intermediate_reference_points, axis=0)
 
-# def run_decoder(decoderlayer_cell, decoder_cell, batch_size, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index):
+# def run_decoder(decoderlayer_cell, decoder_cell, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index):
 #     from deformable_encoder import run_encoder
 #     # prepare data for decoder
 #     def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spatial_shapes=None):
@@ -642,7 +598,7 @@ class DeformableTransformerDecoder(nn.Cell):
 #         return pos
 
 #     memory, [src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten] = \
-#         run_encoder(batch_size, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
+#         run_encoder(hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
 #     bs, _, c = memory.shape
 #     output_memory, output_proposals = gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
 #     enc_outputs_class = nn.Dense(hidden_size, 2)(output_memory)
@@ -668,8 +624,8 @@ class DeformableTransformerDecoder(nn.Cell):
 #     text_mask = None
 #     num_decoder_layers = 3
 #     return_intermediate_dec = False
-#     decoder_layer = decoderlayer_cell(batch_size, hidden_size, batch_size, hidden_size, ffn_hidden_size=1024,
-#                                                       src_seq_length=src_flatten.shape[1], tgt_seq_length = src_flatten.shape[1],
+#     decoder_layer = decoderlayer_cell(hidden_size, hidden_size, ffn_hidden_size=1024,
+#                                                      
 #                                                       num_heads = 4, num_levels=3, num_points=4)
 #     decoder = decoder_cell(decoder_layer, num_decoder_layers, return_intermediate_dec)
 
@@ -691,7 +647,7 @@ class DeformableTransformerDecoder(nn.Cell):
 #     level_start_index = np.array([0, 28*28, 28*28+14*14])
     
 #     run_decoder(DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,
-#         batch_size, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
+#         hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
 
 #     run_decoder(DeformableTransformerDecoderLayer, DeformableTransformerDecoder,
-#         batch_size, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
+#         hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)

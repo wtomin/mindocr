@@ -150,14 +150,18 @@ def build_dataset(
         if drop_remainder and is_main_device:
             print("WARNING: `drop_remainder` is forced to be False for evaluation to include the last batch for accurate evaluation." )
             drop_remainder = False
+    output_columns = loader_config.get('output_columns', None)
+    per_batch_map = loader_config.get('per_batch_map', None)
+    if per_batch_map is not None:
+        per_batch_map = eval(per_batch_map)
 
     dataloader = ds.batch(
                     batch_size,
                     drop_remainder=drop_remainder,
                     num_parallel_workers=min(num_workers, 2), # set small workers for lite computation. TODO: increase for batch-wise mapping
-                    #input_columns=input_columns,
-                    #output_columns=batch_column,
-                    #per_batch_map=per_batch_map, # uncommet to use inner-batch transformation
+                    input_columns=dataset_column_names if per_batch_map is not None else None,
+                    output_columns=output_columns,
+                    per_batch_map=per_batch_map, # uncommet to use inner-batch transformation'), # uncommet to use inner-batch transformation
                     )
 
     return dataloader

@@ -5,28 +5,22 @@ from mindocr.models.layers import MultiScaleDeformableAttention, DeformableTrans
                                   DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,\
                                   PositionalEncoding1D, PositionalEncoding2D
                                   
-from mindspore.nn.transformer.op_parallel_config import default_dpmp_config
+from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
 import copy
 from typing import Optional, List, Tuple
 import math
 import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
-
-from mindspore.ops import operations as P
-from mindspore.ops import functional as F
 import numpy as np
 import mindspore as ms
-from mindspore.nn import Cell
 from mindspore import dtype as mstype
-from mindspore.common.initializer import initializer, Normal, XavierUniform
-from mindocr.utils.misc import NestedTensor, nested_tensor_from_tensor_list, MLP
+from mindspore.common.initializer import initializer,  XavierUniform
+from mindocr.utils.misc import MLP
 
 class DeformableTransformer(nn.Cell):
-    def __init__(self, batch_size: int,
+    def __init__(self, 
                  hidden_size: int, 
                  ffn_hidden_size: int,
-                 src_seq_length:Optional[int] = None,
-                 tgt_seq_length:Optional[int] = None,
                  num_levels:int=4, 
                  num_heads:int=8, 
                  return_intermediate_dec=False,
@@ -35,33 +29,28 @@ class DeformableTransformer(nn.Cell):
                  num_proposals=300,
                  dropout_rate: float = 0.0,
                  attention_dropout_rate: float = 0.0,
-                 hidden_dropout_rate: float = 0.0, 
                  activation: str = "relu", 
-                 layernorm_compute_type: mstype.number = mstype.float32,
                  softmax_compute_type: mstype.number = mstype.float32,
                  param_init_type: mstype.number = mstype.float32,
-                 compute_dtype: mstype.number = mstype.float32,
                  parallel_config = default_dpmp_config):
         
         super().__init__()
         self.num_proposals = num_proposals
         self.hidden_size = hidden_size
         self.ffn_hidden_size = ffn_hidden_size
-        encoder_layer = DeformableTransformerEncoderLayer(batch_size, hidden_size, ffn_hidden_size, num_heads, src_seq_length, num_levels, 
-                                                          enc_num_points, attention_dropout_rate, hidden_dropout_rate, ffn_dropout_rate=dropout_rate,
-                                                          activation = activation, layernorm_compute_type=layernorm_compute_type,
+        encoder_layer = DeformableTransformerEncoderLayer(hidden_size, ffn_hidden_size, num_heads, num_levels, 
+                                                          enc_num_points, attention_dropout_rate, ffn_dropout_rate=dropout_rate,
+                                                          activation = activation, 
                                                           softmax_compute_type=softmax_compute_type,
                                                           param_init_type=param_init_type,
-                                                          compute_dtype=compute_dtype,
                                                           parallel_config=parallel_config)
         self.encoder = DeformableTransformerEncoder(encoder_layer, num_layers=num_encoder_layers)
         
 
-        decoder_layer = DeformableCompositeTransformerDecoderLayer(batch_size, hidden_size, ffn_hidden_size,
-                                                                   src_seq_length, tgt_seq_length, num_levels, num_heads, dec_num_points,
-                                                                   dropout_rate, attention_dropout_rate, hidden_dropout_rate, 
-                                                                   activation, layernorm_compute_type, softmax_compute_type, 
-                                                                   param_init_type, compute_dtype,
+        decoder_layer = DeformableCompositeTransformerDecoderLayer(hidden_size, ffn_hidden_size, num_levels, num_heads, dec_num_points,
+                                                                   dropout_rate, attention_dropout_rate, 
+                                                                   activation, softmax_compute_type, 
+                                                                   param_init_type, 
                                                                    parallel_config)
         self.decoder = DeformableCompositeTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
         
@@ -94,13 +83,14 @@ class DeformableTransformer(nn.Cell):
         base_scale = 4.0
         proposals = []
         cur = 0
-        for lvl, (H, W) in enumerate(spatial_shapes):
+        spatial_shapes_list = spatial_shapes.asnumpy().tolist()
+        for lvl, (H, W) in enumerate(spatial_shapes_list):
             mask_flatten = memory_padding_mask[:, cur:(cur + H * W)].reshape(N, H, W, 1)
             valid_H = (~mask_flatten[:, :, 0, 0]).sum(1)
             valid_W = (~mask_flatten[:, 0, :, 0]).sum(1)
 
-            grid_y, grid_x = ops.meshgrid((ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
-                                        ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(W - 1, dtype=mstype.float32), W)))
+            grid_y, grid_x = ops.meshgrid(ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
+                                        ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(W - 1, dtype=mstype.float32), W))
             grid = ops.concat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)],-1 )
 
             scale = ops.concat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(N, 1, 1, 2)
@@ -110,37 +100,40 @@ class DeformableTransformer(nn.Cell):
             proposals.append(proposal)
             cur += (H * W)
         output_proposals = ops.concat( proposals, 1)
-        output_proposals_valid = ops.tile(ops.logical_and(output_proposals > 0.01, output_proposals < 0.99).all(-1).unsqueeze(-1), 
-                                                    (1, 1,output_proposals.shape[-1]))
+        output_proposals_valid = ops.logical_and(output_proposals > 0.01, output_proposals < 0.99).all(-1, keep_dims=True)
             
         output_proposals = ops.log(output_proposals / (1 - output_proposals))
-        output_proposals = ops.MaskedFill()(output_proposals, memory_padding_mask.unsqueeze(-1), float('inf'))
-        output_proposals = ops.MaskedFill()(output_proposals, ~output_proposals_valid, float('inf'))
+        output_proposals = ops.masked_fill(output_proposals, memory_padding_mask.unsqueeze(-1), float('inf'))
+        output_proposals = ops.masked_fill(output_proposals, ~output_proposals_valid, float('inf'))
 
         output_memory = memory
-        output_memory = ops.MaskedFill()(output_memory, memory_padding_mask.unsqueeze(-1), float(0))
-        output_memory = ops.MaskedFill()(output_memory, ~output_proposals_valid, float(0))
+        output_memory = ops.masked_fill(output_memory, memory_padding_mask.unsqueeze(-1), float(0))
+        output_memory = ops.masked_fill(output_memory, ~output_proposals_valid, float(0))
         output_memory = self.enc_output_norm(self.enc_output(output_memory))
         return output_memory, output_proposals
     def get_proposal_pos_embed(self, proposals):
         num_pos_feats = 64
         temperature = 10000
         scale = 2 * math.pi
-        dim_t = mnp.arange(num_pos_feats, dtype=proposals.dtype)
+        dim_t = ops.range(Tensor(0, mstype.int32), Tensor(num_pos_feats, mstype.int32), Tensor(1, mstype.int32))
         dim_t = temperature ** (2 * ops.FloorDiv()(dim_t, Tensor(2, proposals.dtype)) / num_pos_feats)
         proposals = ops.sigmoid(proposals) * scale
-        pos = proposals[:,:,:,:, None] / dim_t # size incorrect?
-        sin_pos = mnp.sin(pos[:, :, :, :, 0::2])
-        cos_pos = mnp.cos(pos[:, :, :, :, 1::2])
-        pos = ops.stack((sin_pos, cos_pos), axis=4).reshape((pos.shape[0], pos.shape[1],-1))
+        # N, L, 4
+        pos = proposals[:,:,:, None] / dim_t 
+        # N, L, 4, 128
+        sin_pos = ops.sin(pos[:, :, :, 0::2])
+        cos_pos = ops.cos(pos[:, :, :, 1::2])
+        # N, L, 4, 64, 2
+        pos = ops.stack((sin_pos, cos_pos), axis=4).reshape((pos.shape[0], pos.shape[1], -1))
+        # N, L, 4*128
         return pos
 
     def get_valid_ratio(self, mask):
         _, H, W = mask.shape
-        valid_H = ops.sum(~mask[:, :, 0], axis=1)
-        valid_W = ops.sum(~mask[:, 0, :], axis=1)
-        valid_ratio_h = valid_H / H
-        valid_ratio_w = valid_W / W
+        valid_H = (~mask[:, :, 0]).sum(1)
+        valid_W = (~mask[:, 0, :]).sum(1)
+        valid_ratio_h = valid_H.float() / float(H)
+        valid_ratio_w = valid_W.float()  / float(W) 
         valid_ratio = ops.stack([valid_ratio_w, valid_ratio_h], axis=-1)
         return valid_ratio
     def construct(self, srcs, masks, pos_embeds, query_embed, text_embed, text_pos_embed, text_mask=None):
@@ -148,22 +141,25 @@ class DeformableTransformer(nn.Cell):
         src_flatten = []
         mask_flatten = []
         lvl_pos_embed_flatten = []
+        spatial_shapes = []
 
         for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
             bs, c, h, w = src.shape
-            src = ops.transpose(src.reshape((src.shape[0], src.shape[1], -1)), (0, 2, 1))
-            mask = mask.reshape(mask.shape[0], -1)
+            spatial_shapes.append((h, w))
+            src = ops.transpose(src.reshape((bs, c, -1)), (0, 2, 1))
+            mask = mask.reshape((bs, -1))
             pos_embed = ops.transpose(pos_embed.reshape((pos_embed.shape[0], pos_embed.shape[1], -1)), (0, 2, 1))
             lvl_pos_embed = pos_embed + self.level_embed[lvl].reshape((1, 1, -1))
             lvl_pos_embed_flatten.append(lvl_pos_embed)
             src_flatten.append(src)
             mask_flatten.append(mask)
-        src_flatten = Tensor(ops.concat(src_flatten, 1), mstype.float32)
-        mask_flatten = Tensor(ops.concat(mask_flatten, 1), mstype.bool_)
-        lvl_pos_embed_flatten = Tensor(ops.concat(lvl_pos_embed_flatten, 1), mstype.float32)
-        level_start_index = Tensor(ops.concat((np.zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1])), mstype.int32)
-        spatial_shapes = spatial_shapes.asnumpy().tolist()
-        valid_ratios = Tensor(ops.stack([self.get_valid_ratio(m) for m in masks], 1), mstype.float32)
+        src_flatten = ops.concat(src_flatten, 1)
+        mask_flatten = ops.concat(mask_flatten, 1)
+        lvl_pos_embed_flatten = ops.concat(lvl_pos_embed_flatten, 1)
+        spatial_shapes = Tensor(mnp.array(spatial_shapes), mstype.float16)
+        level_start_index = ops.concat((ops.zeros((1,), mstype.int32), ops.prod(spatial_shapes, 1).cumsum(0).astype(mstype.int32)[:-1]))
+        spatial_shapes = spatial_shapes.astype(mstype.int64)
+        valid_ratios = ops.stack([self.get_valid_ratio(m) for m in masks], 1)
 
         # encoder
         memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
@@ -172,21 +168,18 @@ class DeformableTransformer(nn.Cell):
         output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
         enc_outputs_class = self.bbox_class_embed(output_memory)
         enc_outputs_coord_unact = self.bbox_embed(output_memory) + output_proposals
-
-        topk = 300
+        
+        topk = self.num_proposals
         _, topk_proposals = ops.TopK(sorted=True)(enc_outputs_class[..., 0], topk)
-        topk_proposals = ops.repeat_elements(mnp.expand_dims(topk_proposals, axis=-1), 4, axis=2)
-        topk_coords_unact = ops.Gather()(enc_outputs_coord_unact, topk_proposals,1 )
+        topk_proposals = ops.repeat_elements(topk_proposals.unsqueeze(-1), 4, axis=-1)
+        topk_coords_unact = ops.GatherD()(enc_outputs_coord_unact, 1, topk_proposals) 
         topk_coords_unact =  ops.stop_gradient(topk_coords_unact)
         reference_points = ops.sigmoid(topk_coords_unact)
         init_reference_out = reference_points
         query_pos = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-        
-        query_embed = mnp.expand_dims(query_embed, axis=0).repeat(bs, 1, 1, 1)
-        query_pos_shape = query_pos.shape
-        query_pos = mnp.expand_dims(query_pos, axis=2).repeat(1, 1, query_embed.shape[2], 1)
-        query_pos = mnp.reshape(query_pos, (query_pos_shape[0] * query_pos_shape[1], query_pos_shape[2], query_pos_shape[3]))
-        text_embed = mnp.expand_dims(text_embed, axis=0).repeat(bs, 1, 1, 1)
+        query_embed = ops.repeat_elements(query_embed.unsqueeze(0), bs, axis=0)
+        query_pos = ops.repeat_elements(query_pos.unsqueeze(2),  query_embed.shape[2], axis=2)
+        text_embed = ops.repeat_elements(text_embed.unsqueeze(0), bs, axis=0)
 
         # decoder
         hs, hs_text, inter_references = self.decoder(
@@ -200,7 +193,7 @@ class DeformableTransformer(nn.Cell):
 
 
 class TESTRDeformableTransformer(nn.Cell):
-    def __init__(self, batch_size: int,
+    def __init__(self, 
                  hidden_size: int, 
                  ffn_hidden_size: int,
                  pos_embed_scale: float, 
@@ -210,8 +203,6 @@ class TESTRDeformableTransformer(nn.Cell):
                  num_encoder_layers:int, 
                  num_decoder_layers:int, 
                  num_proposals: int,
-                 src_seq_length: Optional[int] = None,
-                 tgt_seq_length: Optional[int] = None,
                  in_channels: List[int] = [256, 512, 1024, 2048],
                  num_levels:int=4, 
                  num_heads:int=8, 
@@ -221,15 +212,11 @@ class TESTRDeformableTransformer(nn.Cell):
                  max_text_len: int = 25,
                  dropout_rate: float = 0.0,
                  attention_dropout_rate: float = 0.0,
-                 hidden_dropout_rate: float = 0.0, 
                  activation: str = "relu", 
-                 layernorm_compute_type: mstype.number = mstype.float32,
                  softmax_compute_type: mstype.number = mstype.float32,
                  param_init_type: mstype.number = mstype.float32,
-                 compute_dtype: mstype.number = mstype.float32,
                  parallel_config = default_dpmp_config):
         super().__init__()
-
         self.pos_embed_scale = pos_embed_scale
         self.hidden_size = hidden_size
         self.num_classes = num_classes
@@ -237,18 +224,18 @@ class TESTRDeformableTransformer(nn.Cell):
         self.num_ctrl_points = num_ctrl_points
         self.max_text_len = max_text_len
         self.num_levels = num_levels
+        self.num_proposals = num_proposals
 
         self.in_channels = in_channels
         assert len(self.in_channels)>0
 
         self.text_pos_embed   = PositionalEncoding1D(self.hidden_size, normalize=True, scale=self.pos_embed_scale)
-        self.transformer = DeformableTransformer(batch_size, hidden_size, ffn_hidden_size,
-                                                 src_seq_length, tgt_seq_length, num_levels,
+        self.transformer = DeformableTransformer( hidden_size, ffn_hidden_size,num_levels,
                                                  num_heads, return_intermediate_dec, dec_num_points,
                                                  enc_num_points, num_encoder_layers, num_decoder_layers,
-                                                 num_proposals, dropout_rate, attention_dropout_rate, hidden_dropout_rate,
-                                                 activation, layernorm_compute_type, softmax_compute_type,
-                                                 param_init_type, compute_dtype,
+                                                 num_proposals, dropout_rate, attention_dropout_rate, 
+                                                 activation, softmax_compute_type,
+                                                 param_init_type, 
                                                  parallel_config)
         
         self.bbox_coord = MLP(self.hidden_size, self.hidden_size, output_dim = 4, num_layers = 3) 
@@ -286,7 +273,7 @@ class TESTRDeformableTransformer(nn.Cell):
                 nn.GroupNorm(32, hidden_size)])
         
         prior_prob = 0.01
-        bias_value = -np.log((1 - prior_prob) / prior_prob)
+        bias_value = -mnp.log((1 - prior_prob) / prior_prob)
         self.bbox_class.bias.set_data(initializer('ones', [num_classes]) * bias_value, param_init_type)
         self.bbox_class.weight.set_data(initializer('zeros', self.bbox_class.weight.shape, param_init_type))
 
@@ -301,12 +288,8 @@ class TESTRDeformableTransformer(nn.Cell):
 
         self.out_channels = self.hidden_size # it is for argument setting, not used by the TESTRHead
     
-    def forward(self, samples):
-        """ samples is NestedTensor
-               - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
-               - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
-        """
-        # features, pos = self.backbone(samples)
+    def construct(self, samples):
+        features, pos = samples
 
         if self.num_levels == 1:
             features = [features[-1]]
@@ -314,30 +297,33 @@ class TESTRDeformableTransformer(nn.Cell):
 
         srcs = []
         masks = []
-        for l, feat in enumerate(features):
-            src, mask = feat.decompose()
+        for l, feature in enumerate(features):
+            src, mask = feature['tensor'], feature['mask']
             srcs.append(self.input_proj[l](src))
             masks.append(mask)
             assert mask is not None
-        assert self.num_levels == len(srcs), "length does not match!"
-        # if self.num_levels > len(srcs):
-        #     _len_srcs = len(srcs)
-        #     for l in range(_len_srcs, self.num_levels):
-        #         if l == _len_srcs:
-        #             src = self.input_proj[l](features[-1].tensors)
-        #         else:
-        #             src = self.input_proj[l](srcs[-1])
-        #         m = masks[0]
-        #         mask = P.cast(F.interpolate( m[None].float(), size=src.shape[-2:]), dtype=mstype.bool_)[0]
-        #         pos_l = P.cast(self.backbone[1](NestedTensor(src, mask)), dtype=src.dtype)
-        #         srcs.append(src)
-        #         masks.append(mask)
-        #         pos.append(pos_l)
+        if self.num_levels > len(srcs):
+            pos_encoder = PositionalEncoding2D(self.hidden_size//2, normalize=True)
+            _len_srcs = len(srcs)
+            for l in range(_len_srcs, self.num_levels):
+                if l == _len_srcs:
+                    src = self.input_proj[l](features[-1]['tensor'])
+                else:
+                    src = self.input_proj[l](srcs[-1])
+                m = masks[0]
+                try:
+                    mask = ops.interpolate(m[ None].float(), size=(10,10) , mode='bilinear')[0].bool()
+                except:
+                    mask = ops.interpolate(m[ None].float(), sizes=(10,10) , mode='bilinear')[0].bool()
+                pos_l = pos_encoder(mask)
+                srcs.append(src)
+                masks.append(mask)
+                pos.append(pos_l)
 
         # n_points, embed_dim --> n_objects, n_points, embed_dim
-        ctrl_point_embed = self.ctrl_point_embed.weight[None, ...].repeat(self.num_proposals, 1, 1)
-        text_pos_embed = self.text_pos_embed(self.text_embed.weight)[None, ...].repeat(self.num_proposals, 1, 1)
-        text_embed = self.text_embed.weight[None, ...].repeat(self.num_proposals, 1, 1)
+        ctrl_point_embed = ops.repeat_elements(self.ctrl_point_embed.embedding_table[None, ...], self.num_proposals, 0)
+        text_pos_embed = ops.repeat_elements(self.text_pos_embed(self.text_embed.embedding_table)[None, ...], self.num_proposals, 0)
+        text_embed = ops.repeat_elements(self.text_embed.embedding_table[None, ...], self.num_proposals, 0)
 
         hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.transformer(
             srcs, masks, pos, ctrl_point_embed, text_embed, text_pos_embed, text_mask=None)

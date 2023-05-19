@@ -4,7 +4,7 @@ from mindocr.models.layers import MultiScaleDeformableAttention, DeformableTrans
                                   DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,\
                                   PositionalEncoding1D, PositionalEncoding2D
                                   
-from mindspore.nn.transformer.op_parallel_config import default_dpmp_config
+from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
 import copy
 from typing import Optional, List, Tuple
 import math
@@ -19,7 +19,7 @@ from mindspore import nn
 from mindspore.nn import Cell
 from mindspore import dtype as mstype
 from mindspore.common.initializer import initializer, Normal, XavierUniform
-from mindocr.utils.misc import NestedTensor,  MLP, inverse_sigmoid_offset, sigmoid_offset, _get_clones
+from mindocr.utils.misc import MLP, inverse_sigmoid_offset, sigmoid_offset, _get_clones
 
 class TESTRHead(nn.Cell):
     def __init__(self, hidden_size:int,
@@ -50,7 +50,8 @@ class TESTRHead(nn.Cell):
         self.ctrl_point_coord = _get_clones(self.ctrl_point_coord, num_pred)
         self.text_class = nn.Dense(self.hidden_size, self.voc_size + 1)
 
-    def construct(self, hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact):
+    def construct(self, inputs):
+        hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = inputs
         # output
         outputs_classes = []
         outputs_coords = []
@@ -79,21 +80,23 @@ class TESTRHead(nn.Cell):
         out = {'pred_logits': outputs_class[-1],
                'pred_ctrl_points': outputs_coord[-1],
                'pred_texts': outputs_text[-1]}
-        if self.aux_loss:
-            out['aux_outputs'] = self._set_aux_loss(
-                outputs_class, outputs_coord, outputs_text)
+        # if self.aux_loss:
+        #     # in the torch codes, it is a workaround to make torchscript happy, as torchscript doesn't support dictionary with non-homogeneous values
+        #     # do not use it here. 
+        #     out['aux_outputs'] = self._set_aux_loss(
+        #         outputs_class, outputs_coord, outputs_text)
 
         enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
         out['enc_outputs'] = {
             'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
         return out
     
-    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_text):
-        # this is a workaround to make torchscript happy, as torchscript
-        # doesn't support dictionary with non-homogeneous values, such
-        # as a dict having both a Tensor and a list.
-        return [{'pred_logits': a, 'pred_ctrl_points': b, 'pred_texts': c}
-                for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
+    # def _set_aux_loss(self, outputs_class, outputs_coord, outputs_text):
+    #     # this is a workaround to make torchscript happy, as torchscript
+    #     # doesn't support dictionary with non-homogeneous values, such
+    #     # as a dict having both a Tensor and a list.
+    #     return [{'pred_logits': a, 'pred_ctrl_points': b, 'pred_texts': c}
+    #             for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
     
     
     # def inference(self, ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes):

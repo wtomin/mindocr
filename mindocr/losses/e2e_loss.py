@@ -2,7 +2,8 @@ from typing import Optional, List, Tuple
 import math
 import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
-
+from mindspore.communication._comm_helper import GlobalComm
+from mindspore.communication import get_group_size
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 import numpy as np
@@ -99,7 +100,7 @@ class TESTRLoss(LossBase):
         self.focal_gamma = focal_gamma
         self.num_ctrl_points = num_ctrl_points
         self.use_polygon = use_polygon
-        self.binary_cross_entropy = ops.BinaryCrossEntropy()
+        self.binary_cross_entropy = ops.SoftmaxCrossEntropyWithLogits()
         self.l1_loss = nn.L1Loss(reduction='sum')
         self.sigmoid_focal_loss = SigmoidFocalLoss(alpha=focal_alpha, gamma=focal_gamma)
     @classmethod
@@ -141,23 +142,21 @@ class TESTRLoss(LossBase):
         src_logits = outputs['pred_logits']
 
         idx = self.get_src_permutation_idx(indices)
-
-        target_classes = ops.ones(src_logits.shape[:-1],
-                                    ops.int32, device=src_logits.device)
-        target_classes_o = ops.concatenate([t["labels"][J]
-                                    for t, (_, J) in zip(targets, indices)])
+        target_classes = mnp.full_like(src_logits[..., 0], self.num_classes, dtype=mstype.int32)
+        target_classes_o = ops.concat([t["labels"][J]  for t, (_, J) in zip(targets, indices)])
         if len(target_classes_o.shape) < len(target_classes[idx].shape):
-            target_classes_o = target_classes_o[..., ops.newaxis]
-        target_classes = ops.tensor.Tensor(np.concatenate((target_classes, ops.asnumpy(target_classes_o)), axis=0), dtype=ops.int64)
+            target_classes_o = target_classes_o[..., None]
         target_classes[idx] = target_classes_o
 
         shape = list(src_logits.shape)
         shape[-1] += 1
-        target_classes_onehot = ops.zeros(shape,
-                                            dtype=src_logits.dtype, device=src_logits.device)
-        target_classes_onehot.scatter_(-1, target_classes.unsqueeze(-1), 1)
+        target_classes_onehot = ops.zeros(shape, dtype=mstype.int32)
+        target_classes_onehot = ops.scatter(target_classes_onehot, -1, 
+                                            ops.repeat_elements(target_classes.unsqueeze(-1), 2, -1), 
+                                            ops.ones(shape, mstype.int32))
         target_classes_onehot = target_classes_onehot[..., :-1]
-        loss_ce = self.sigmoid_focal_loss(src_logits, target_classes_onehot, num_inst) * src_logits.shape[1]
+        import pdb; pdb.set_trace()
+        loss_ce = self.sigmoid_focal_loss(src_logits, target_classes_onehot.float(), num_inst) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
         if log:
@@ -192,7 +191,7 @@ class TESTRLoss(LossBase):
         target_boxes = ops.concatenate([t['boxes'][i]
                                 for t, (_, i) in zip(targets, indices)], axis=0)
 
-        loss_bbox = self.l1_loss(src_boxes, target_boxes, reduction='none')
+        loss_bbox = self.l1_loss(src_boxes, target_boxes)
 
         losses = {}
         losses['loss_bbox'] = loss_bbox.sum() / num_inst
@@ -207,8 +206,13 @@ class TESTRLoss(LossBase):
         assert 'pred_texts' in outputs
         idx = self.get_src_permutation_idx(indices)
         src_texts = outputs['pred_texts'][idx]
-        target_ctrl_points = mnp.concatenate([t['texts'][i] for t, (_, i) in zip(targets, indices)], axis=0)
-        loss_texts = self.binary_cross_entropy(src_texts.transpose(0, 2, 1), target_ctrl_points.astype('int32'))
+        target_texts = mnp.concatenate([t['texts'][i] for t, (_, i) in zip(targets, indices)], axis=0)
+        shape = src_texts.shape
+        num_classes = shape[-1]
+        target_texts_onehot = ops.zeros(shape, dtype=target_texts.dtype).scatter(-1, 
+                                                                                 ops.repeat_elements(target_texts.unsqueeze(-1), num_classes, -1), 
+                                                                                 ops.ones(shape, target_texts.dtype))
+        loss_texts = self.binary_cross_entropy(src_texts.reshape((-1, num_classes)), target_texts_onehot.reshape((-1, num_classes)))
         return {'loss_texts': loss_texts}
 
     def loss_ctrl_points(self, outputs, targets, indices, num_inst):
@@ -217,9 +221,11 @@ class TESTRLoss(LossBase):
         assert 'pred_ctrl_points' in outputs
         idx = self.get_src_permutation_idx(indices)
         src_ctrl_points = outputs['pred_ctrl_points'][idx]
-        target_ctrl_points = mnp.concatenate([t['ctrl_points'][i] for t, (_, i) in zip(targets, indices)], axis=0)
-
-        loss_ctrl_points = self.l1_loss(src_ctrl_points, target_ctrl_points)
+        target_ctrl_points = mnp.concatenate([t['ctrl_points'][i][:,:,:2] for t, (_, i) in zip(targets, indices)], axis=0)
+        target_ctrl_points_vis = mnp.concatenate([t['ctrl_points'][i][:,:,2] for t, (_, i) in zip(targets, indices)], axis=0)
+        mask = (target_ctrl_points_vis == 1).unsqueeze(-1)
+        mask = ops.concat([mask, mask], axis=-1)
+        loss_ctrl_points = self.l1_loss(src_ctrl_points[mask], target_ctrl_points[mask]) # reduction = sum?
 
         losses = {'loss_ctrl_points': loss_ctrl_points / num_inst}
         return losses
@@ -243,16 +249,29 @@ class TESTRLoss(LossBase):
 
     def prepare_targets(self, targets):
         """
-        prepare the control points and the text labels for the loss computation
+        prepare the 
         """
-        image_sizes =targets['image_size'] # h,w order
-        image_size_xyxy = ops.concat([image_sizes[:, ::-1], image_sizes[:, ::-1]], axis=-1) # [w, h, w, h]
-        gt_boxes = targets['polys'] / image_size_xyxy
-        gt_boxes = box_xyxy_to_cxcywh(gt_boxes)
+        new_targets = {'enc': [], 'dec': []}
+        image_sizes = targets['image_size'][:, ::-1] # h,w order
         raw_ctrl_points = targets['polys'] if self.use_polygon else targets['beziers']
-        gt_ctrl_points = raw_ctrl_points.reshape(-1, self.num_ctrl_points, 2) / image_sizes[:, ::-1].reshape(1, 1, -1)
-        new_targets = targets.copy() # shallow copy, use deep copy if needed
-        new_targets.update({'boxes': gt_boxes, 'ctrl_points': gt_ctrl_points})
+        gt_classes = targets['gt_classes'] # 0 indicates the text instances, 1 indicates padded instances
+        ignore_tags = targets['ignore_tags']
+        gt_text_ids = targets['rec_ids']
+        for i in range(len(image_sizes)):
+            # prepare encoder labels and gt_boxes
+            non_pad_mask = gt_classes[i] == 0 
+            gt_class = gt_classes[i][non_pad_mask]
+            gt_boxes_per_image = targets['boxes'][i][non_pad_mask] / image_sizes[i] # (N, 4, 2)
+            gt_boxes_per_image = box_xyxy_to_cxcywh(gt_boxes_per_image) # (x_center, y_center, width, height)
+            new_targets['enc'].append({'labels': gt_class, 'boxes': gt_boxes_per_image})
+            # prepare decoder labels, gt_ctrl_points and text_ids
+            non_ignore_tags = ~ignore_tags[i]
+            gt_ctrl_points = raw_ctrl_points[i][non_ignore_tags& non_pad_mask] # (N, num_ctrl_points, 3), the last dimension indicates the visibility
+            gt_ctrl_points[:, :, :2] = gt_ctrl_points[:,:, :2] / image_sizes[i] # normalize the coordinates
+            gt_class = gt_classes[i][non_ignore_tags& non_pad_mask]
+            gt_text_id = gt_text_ids[i][non_ignore_tags& non_pad_mask]
+            new_targets['dec'].append({'ctrl_points': gt_ctrl_points, 'labels': gt_class, 'texts': gt_text_id})
+
         return new_targets
 
     def get_loss(self, loss_name, outputs, targets, indices, num_inst, **kwargs):
@@ -274,20 +293,21 @@ class TESTRLoss(LossBase):
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
-        indices = self.dec_matcher(outputs_without_aux, targets)
+        indices = ops.stop_gradient(self.dec_matcher(outputs_without_aux, targets['dec']))
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
-        num_inst = sum(len(t['ctrl_points']) for t in targets)
-        num_inst = Tensor([num_inst], dtype=mstype.float32, device=outputs[next(iter(outputs))].device)
-        if ops.context.get_context("enable_spatial_parallel"):
-            num_inst = self.reduce_sum(num_inst)
-        num_inst = self.clamp_min(num_inst / ops.get_world_size(), 1).asnumpy()[0]
+        num_inst = sum(len(t['ctrl_points']) for t in targets['dec'])
+        num_inst = Tensor([num_inst], dtype=mstype.float32)
+        if GlobalComm.INITED: # distributed training
+            P.AllReduce()(num_inst)
+        num_inst = num_inst / (1 if not GlobalComm.INITED else get_group_size())
+        num_inst = ops.clip_by_value(num_inst, 1, num_inst).asnumpy()[0]
 
         # Compute all the requested losses
         losses = {}
         for loss in self.dec_losses:
             kwargs = {}
-            losses.update(self.get_loss(loss, outputs, targets, indices, num_inst, **kwargs))
+            losses.update(self.get_loss(loss, outputs, targets['dec'], indices, num_inst, **kwargs))
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
@@ -311,7 +331,7 @@ class TESTRLoss(LossBase):
                 kwargs = {}
                 if loss == 'labels':
                     kwargs['log'] = False
-                l_dict = self.get_loss(loss, enc_outputs, targets, indices, num_inst, **kwargs)
+                l_dict = self.get_loss(loss, enc_outputs, targets['enc'], indices, num_inst, **kwargs)
                 l_dict = {k + f'_enc': v for k, v in l_dict.items()}
                 losses.update(l_dict)
         

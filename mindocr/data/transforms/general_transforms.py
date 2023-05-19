@@ -12,7 +12,6 @@ from ...data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from shapely.geometry import Polygon, box
 from mindspore.dataset.vision import RandomColorAdjust as MSRandomColorAdjust, ToPIL
 
-
 __all__ = ['DecodeImage', 'NormalizeImage', 'ToCHWImage', 'PackLoaderInputs', 'ScalePadImage', 'GridResize',
            'RandomScale', 'RandomCropWithBBox', 'RandomCropWithInstances', 'ResizePadImage', 'RandomColorAdjust',  'ValidatePolygons']
 
@@ -451,22 +450,22 @@ class RandomCropWithInstances:
             x_crop_min = max(0, x_max-crop_size[1] + 1)
             y_crop_max = min(image_size[0] - crop_size[0], y_min)
             x_crop_max = min(image_size[1] - crop_size[1], x_min)
-            if y_crop_min >= y_crop_max or x_crop_min >= x_crop_max:
+            if y_crop_min > y_crop_max or x_crop_min > x_crop_max:
                 continue
             for _ in range(10):
                 y0 = np.random.randint(y_crop_min, y_crop_max + 1)
                 x0 = np.random.randint(x_crop_min, x_crop_max + 1)
                 assert y0+crop_size[0] <= image_size[0] and x0+crop_size[1] <= image_size[1]
-                if x0<x_min and y0<y_min and x0+crop_size[1]>x_max and y0+crop_size[0]>y_max:
+                if x0<=x_min and y0<=y_min and x0+crop_size[1]>=x_max and y0+crop_size[0]>=y_max:
                     crop_found = True
                     break 
             if crop_found:
                 break
         if not crop_found:
-            print("Cannot find a crop region that contains a random text instance. Crop all the text instances instead.")
-            keep_all_boxes = True
-        
-        if keep_all_boxes:
+            print("Cannot find a crop region that contains a random text instance. use the original image instead")
+            x0, y0 = 0, 0
+            crop_size = np.array(image_size)
+        elif keep_all_boxes:
             # Some boxes maybe cropped out so we need to modify th crop box coordinates to make them still contain the boxes
             num_modifications = 0
             modified = True
@@ -481,6 +480,8 @@ class RandomCropWithInstances:
                         )
                     )
         # crop the image
+        x0, y0 = int(x0), int(y0)
+        crop_size = crop_size.astype('int32')
         data['image'] = data['image'][y0:y0 + crop_size[0], x0:x0 + crop_size[1]]
         # crop the polygons
         data['polys'] = np.array([poly - np.array([x0, y0]) for poly in data['polys']])
@@ -571,6 +572,7 @@ class ResizePadImage:
         image_mask = np.ones(target_size, dtype=np.uint8)
         image_mask[:new_h, :new_w] =0
         data['image_mask'] = image_mask.astype(bool)
+        data['image_size'] = [new_h, new_w]
         data['polys'] = data['polys'] * scale
         if 'boxes' in data:
             data['boxes'] = data['boxes'] * scale

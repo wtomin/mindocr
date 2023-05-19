@@ -50,17 +50,26 @@ def accuracy(output, target, topk=(1,)):
         res.append(correct_k * 100.0 / batch_size)
     return res
 
-class NestedTensor(object):
+# class NestedTensor(object):
     
-    def __init__(self, tensors, mask: Optional[Tensor]):
-        self.tensors = tensors
-        self.mask = mask
+#     def __init__(self, tensor, mask: Optional[Tensor]):
+#         self.tensor = tensor
+#         self.mask = mask
+#         pixel_indices = np.where(mask==0)
+#         min_x, min_y = pixel_indices[0].min(), pixel_indices[1].min()
+#         max_x, max_y = pixel_indices[0].max(), pixel_indices[1].max()
+#         size = [max_x - min_x+1, max_y - min_y+1]
+        
+#         self.image_sizes = size
+#     def decompose(self):
+#         return self.tensor, self.mask
 
-    def decompose(self):
-        return self.tensors, self.mask
+#     def __repr__(self):
+#         return str(self.tensor)
 
-    def __repr__(self):
-        return str(self.tensors)
+# def nested_tensor_from_batch(image, image_mask, polys, rec_ids, ignore_tags, gt_classes, BatchInfo):
+#     nested_tensor = NestedTensor(image, image_mask)
+#     return nested_tensor, polys, rec_ids, ignore_tags, gt_classes, BatchInfo
 
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
@@ -129,9 +138,10 @@ def box_cxcywh_to_xyxy(x):
 
 
 def box_xyxy_to_cxcywh(x):
-    x0, y0, x1, y1 = ops.unbind(x, -1)
-    b = [(x0 + x1) / 2, (y0 + y1) / 2,
-         (x1 - x0), (y1 - y0)]
+    x_min, x_max = x[:,:, 0].min(-1), x[:, :, 0].max(-1)
+    y_min, y_max = x[:, :, 1].min(-1), x[:,:, 1].max(-1)
+    b = [(x_min + x_max) / 2, (y_min + y_max) / 2, (x_max - x_min), (y_max - y_min)]
+    assert (b[2]>0).all() and (b[3] > 0).all()
     return ops.stack(b, -1)
 
 def box_iou(boxes1, boxes2):
