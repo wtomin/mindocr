@@ -62,7 +62,6 @@ class NetWithLossWrapper(nn.Cell):
                 if self.inputs_outputs_type ==0:
                     logging.warning(f"Network prediction is a dictionary. Better to return tuple (list) because inputs_outputs_type is {self.inputs_outputs_type}")
                 pred = {k: F.cast(v, mstype.float32) for k, v in pred.items()}
-        
         if self.label_indices is None:
             loss_val = self._loss_fn(pred, args[1:])
         else:

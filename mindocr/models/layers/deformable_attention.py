@@ -1,7 +1,6 @@
 import math
 import warnings
 from typing import Optional, List, Tuple
-import numpy as np
 import mindspore as ms
 from mindspore import context
 from mindspore import nn, ops, Tensor
@@ -126,8 +125,7 @@ class MultiScaleDeformableAttention(nn.Cell):
         grid_init = ops.stack([self.cos(thetas), self.sin(thetas)], axis=-1)
         grid_init = grid_init  / ops.abs(grid_init).max(-1, keepdims=True)
         grid_init = grid_init.reshape((self.num_heads, 1, 1, 2))
-        grid_init = ops.repeat_elements(grid_init, self.num_levels, axis=1)
-        grid_init = ops.repeat_elements(grid_init, self.num_points, axis=2)
+        grid_init = ms.numpy.tile(grid_init, (1, self.num_levels, self.num_points, 1))
         
         for i in range(self.num_points):
             grid_init[:, :, i, : ] *= i+1

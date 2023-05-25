@@ -1,6 +1,7 @@
 from typing import Optional, List
 from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype
+import mindspore.numpy as mnp
 from mindspore.ops import functional as F
 import mindspore.ops.operations as P
 import copy
@@ -79,23 +80,6 @@ def _max_by_axis(the_list):
             maxes[index] = max(maxes[index], item)
     return maxes
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
-    # TODO make this more general
-    if tensor_list[0].ndim == 3:
-        # TODO make it support different-sized images
-        max_size = _max_by_axis([list(img.shape) for img in tensor_list])
-        # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
-        batch_shape = [len(tensor_list)] + max_size
-        b, c, h, w = batch_shape
-        dtype = tensor_list[0].dtype
-        tensor = ops.zeros(batch_shape, dtype=dtype)
-        mask = ops.zeros((b, h, w), dtype=mstype.bool_)
-        for img, pad_img, m in zip(tensor_list, tensor, mask):
-            pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
-            m[: img.shape[1], :img.shape[2]] = False
-    else:
-        raise ValueError('not supported')
-    return NestedTensor(tensor, mask)
 
 class MLP(nn.Cell):
     def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
@@ -144,19 +128,25 @@ def box_xyxy_to_cxcywh(x):
     assert (b[2]>0).all() and (b[3] > 0).all()
     return ops.stack(b, -1)
 
+def box_area(boxes):
+    """
+    Computes the area of a set of bounding boxes (xmin, ymin, xmax, ymax)
+    """
+    return (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+
 def box_iou(boxes1, boxes2):
     area1 = box_area(boxes1)
     area2 = box_area(boxes2)
 
-    lt = torch.max(boxes1[:, None, :2], boxes2[:, :2])  # [N,M,2]
-    rb = torch.min(boxes1[:, None, 2:], boxes2[:, 2:])  # [N,M,2]
+    lt = mnp.maximum(boxes1[:, None, :2], boxes2[:, :2])  # [N,M,2]
+    rb = mnp.minimum(boxes1[:, None, 2:], boxes2[:, 2:])  # [N,M,2]
 
     wh = (rb - lt).clamp(min=0)  # [N,M,2]
     inter = wh[:, :, 0] * wh[:, :, 1]  # [N,M]
 
     union = area1[:, None] + area2 - inter
 
-    iou = inter / union
+    iou = inter / (union+1e-6)
     return iou, union
 
 
@@ -173,61 +163,66 @@ def generalized_box_iou(boxes1, boxes2):
     assert (boxes2[:, 2:] >= boxes2[:, :2]).all()
     iou, union = box_iou(boxes1, boxes2)
 
-    lt = torch.min(boxes1[:, None, :2], boxes2[:, :2])
-    rb = torch.max(boxes1[:, None, 2:], boxes2[:, 2:])
+    lt = mnp.minimum(boxes1[:, None, :2], boxes2[:, :2])
+    rb = mnp.maximum(boxes1[:, None, 2:], boxes2[:, 2:])
 
-    wh = (rb - lt).clamp(min=0)  # [N,M,2]
-    area = wh[:, :, 0] * wh[:, :, 1]
+    wh = (rb - lt).clamp(min=0) # [N,M,2]
+    area = wh[:, :, 0] * wh[:, :, 1] # what if area contains zeros
 
-    return iou - (area - union) / area
+    return iou - (area - union) / (area+1e-6)
 
-class ImageTensorWithMask:
-    def __init__(self, image, mask: Optional[Tensor]) -> None:
-       self.image = image
-       self.mask = mask
+# verify the torch version of iou, mindspore version of iou, custom implementation of iou
+def test_iou():
+    import torch
+    import torchvision
+    from mindspore import ops, Tensor
+    import mindspore.common.dtype as mstype
+    boxes1_xy = np.random.uniform(0, 1, size=(50, 2)) 
+    boxes2_xy = np.random.uniform(0, 1, size=(100, 2)) 
+    boxes1 = np.concatenate([boxes1_xy, boxes1_xy + np.random.uniform(0, 0.5, size=(50, 2))], axis=1) #(x1, y1, x2, y2)
+    boxes2 = np.concatenate([boxes2_xy, boxes2_xy + np.random.uniform(0, 0.5, size=(100, 2))], axis=1) #(x1, y1, x2, y2)
+    boxes1 = Tensor(boxes1, mstype.float32)
+    boxes2 = Tensor(boxes2, mstype.float32)
+    boxes1 = ops.clip_by_value(boxes1, 0, 1)
+    boxes2 = ops.clip_by_value(boxes2, 0, 1)
+    iou_ms = ops.iou(boxes1, boxes2).numpy().transpose()
+    iou_torch = torchvision.ops.box_iou(torch.Tensor(boxes1.numpy()), torch.Tensor(boxes2.numpy())).numpy()
+    eps = 1e-3
+    if np.allclose(iou_ms, iou_torch, atol = eps):
+        print("iou the same for mindspore and torch")
+    else:
+        print("iou different for mindspore and torch")
+    print("iou mindspore: ", iou_ms)
+    print("iou torch: ", iou_torch)
 
-    def fetch_image_mask(self,):
-        return self.image, self.mask
-    def __repr__(self) -> str:
-        return "Image:"+str(self.image) +"\nMask"+str(self.mask)
+    iou_custom = box_iou(boxes1, boxes2)[0]
+    iou_custom = iou_custom.numpy()
+    if np.allclose(iou_ms, iou_custom, atol = eps):
+        print("iou the same for mindspore and custom")
+    if np.allclose(iou_torch, iou_custom, atol = eps):
+        print("iou the same for torch and custom")
 
-# resize image according the largest image in the same batch
-class BatchPadding:
-    def __init__(self, input_columns, pad_image = True, pad_polys = True):
-        self.input_columns = input_columns
-        self.output_columns = input_columns+['mask', 'valid_length']
-        self.pad_image = pad_image
-        self.pad_polys = pad_polys
+# verify the torch version of giou, and custom implementation of giou
+def test_giou():
+    import torch
+    import torchvision
+    from mindspore import ops, Tensor
+    import mindspore.common.dtype as mstype
+    boxes1_xy = np.random.uniform(0, 1, size=(50, 2)) 
+    boxes2_xy = np.random.uniform(0, 1, size=(100, 2)) 
+    boxes1 = np.concatenate([boxes1_xy, boxes1_xy + np.random.uniform(0, 0.5, size=(50, 2))], axis=1) #(x1, y1, x2, y2)
+    boxes2 = np.concatenate([boxes2_xy, boxes2_xy + np.random.uniform(0, 0.5, size=(100, 2))], axis=1) #(x1, y1, x2, y2)
+    boxes1 = Tensor(boxes1, mstype.float32)
+    boxes2 = Tensor(boxes2, mstype.float32)
+    boxes1 = ops.clip_by_value(boxes1, 0, 1)
+    boxes2 = ops.clip_by_value(boxes2, 0, 1)
 
-    
-    def pad_DetData(self, image, polys, boxes, texts, rec_ids, ignore_tags, gt_classes, batchinfo):
-        images_list = image 
-        if images_list[0].ndim == 3 and self.pad_image:
-            max_shape = [img.shape for img in images_list]
-            max_shape = np.array(max_shape).max(axis=0)
-            batch_shape = (len(images_list), max_shape[0], max_shape[1], max_shape[2])
-            b, c, h, w = batch_shape
-            new_tensors = np.zeros(batch_shape)
-            masks = np.ones((b, h, w), dtype=np.bool)
-            for img, paded_img, mask in zip(images_list, new_tensors, masks):
-                paded_img[:, :img.shape[-2], :img.shape[-1]] = img
-                mask[:img.shape[-2], :img.shape[-1]] = False
-        else:
-            raise ValueError("images_list should be a list of 3D tensors")
-
-        if self.pad_polys:
-            #pad polys, texts and ignore_tags, ensure they have the same length
-            max_len = max([len(poly) for poly in polys])
-            new_polys, new_boxes, new_texts, new_rec_ids, new_ignore_tags, new_gt_classes = [], [], [], [], [], []
-            valid_label_lengths = []
-            for poly, box, text, rec_id, ignore_tage, gt in zip(polys, boxes, texts, rec_ids, ignore_tags, gt_classes):
-                new_polys.append([x for x in poly] + [poly[0]] * (max_len - len(poly)))
-                new_boxes.append([x for x in box] + [box[0]] * (max_len - len(box)))
-                new_texts.append([x for x in text] + ['###'] * (max_len - len(text)))
-                new_rec_ids.append([x for x in rec_id] + [96] * (max_len - len(rec_id)))
-                new_ignore_tags.append([x for x in ignore_tage] + [True] * (max_len - len(ignore_tage)))
-                new_gt_classes.append([x for x in gt] + [1] * (max_len - len(gt)))
-                valid_label_lengths.append(len(poly))
-        
-        return_list= [new_tensors, new_polys, new_boxes, new_texts, new_rec_ids, new_ignore_tags, new_gt_classes, mask, valid_label_lengths]
-        return return_list
+    giou_custom = generalized_box_iou(boxes1, boxes2).numpy()
+    giou_torch = torchvision.ops.generalized_box_iou(torch.Tensor(boxes1.numpy()), torch.Tensor(boxes2.numpy())).numpy()
+    eps = 1e-3
+    if np.allclose(giou_custom, giou_torch, atol = eps):
+        print("giou the same for custom and torch")
+    else:
+        print("giou different for custom and torch")
+if __name__ == "__main__":
+    test_giou() 

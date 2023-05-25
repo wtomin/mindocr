@@ -153,7 +153,7 @@ class BoxHungarianMatcher(nn.Cell):
             neg_cost_class[:, tgt_ids]
 
         # Compute the L1 cost between boxes
-        cost_bbox = ops.cdist(out_bbox, tgt_bbox, p=1)
+        cost_bbox = ops.cdist(out_bbox, tgt_bbox, p=1.0)
 
         # Compute the giou cost betwen boxes
         cost_giou = -generalized_box_iou(box_cxcywh_to_xyxy(out_bbox),

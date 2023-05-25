@@ -80,23 +80,19 @@ class TESTRHead(nn.Cell):
         out = {'pred_logits': outputs_class[-1],
                'pred_ctrl_points': outputs_coord[-1],
                'pred_texts': outputs_text[-1]}
-        # if self.aux_loss:
-        #     # in the torch codes, it is a workaround to make torchscript happy, as torchscript doesn't support dictionary with non-homogeneous values
-        #     # do not use it here. 
-        #     out['aux_outputs'] = self._set_aux_loss(
-        #         outputs_class, outputs_coord, outputs_text)
+        if self.aux_loss:
+            # return the intermediate layers outputs if auxiliary losses are activated
+            out['aux_outputs'] = self._set_aux_loss(
+                outputs_class, outputs_coord, outputs_text)
 
         enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
         out['enc_outputs'] = {
             'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
         return out
     
-    # def _set_aux_loss(self, outputs_class, outputs_coord, outputs_text):
-    #     # this is a workaround to make torchscript happy, as torchscript
-    #     # doesn't support dictionary with non-homogeneous values, such
-    #     # as a dict having both a Tensor and a list.
-    #     return [{'pred_logits': a, 'pred_ctrl_points': b, 'pred_texts': c}
-    #             for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
+    def _set_aux_loss(self, outputs_class, outputs_coord, outputs_text):
+        return [{'pred_logits': a, 'pred_ctrl_points': b, 'pred_texts': c}
+                for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
     
     
     # def inference(self, ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes):

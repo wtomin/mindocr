@@ -94,7 +94,7 @@ class DeformableTransformer(nn.Cell):
             grid = ops.concat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)],-1 )
 
             scale = ops.concat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(N, 1, 1, 2)
-            grid = (ops.repeat_elements(grid.unsqueeze(0), N, axis=0) + 0.5) / scale
+            grid = (mnp.tile(grid.unsqueeze(0), (N, 1, 1, 1)) + 0.5) / scale
             wh = ops.ones_like(grid) * 0.05 * (2.0 ** lvl)
             proposal = ops.concat([grid, wh], -1).view(N, -1, 4)
             proposals.append(proposal)
@@ -171,15 +171,15 @@ class DeformableTransformer(nn.Cell):
         
         topk = self.num_proposals
         _, topk_proposals = ops.TopK(sorted=True)(enc_outputs_class[..., 0], topk)
-        topk_proposals = ops.repeat_elements(topk_proposals.unsqueeze(-1), 4, axis=-1)
+        topk_proposals = mnp.tile(topk_proposals.unsqueeze(-1), (1, 1, 4))
         topk_coords_unact = ops.GatherD()(enc_outputs_coord_unact, 1, topk_proposals) 
         topk_coords_unact =  ops.stop_gradient(topk_coords_unact)
         reference_points = ops.sigmoid(topk_coords_unact)
         init_reference_out = reference_points
         query_pos = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-        query_embed = ops.repeat_elements(query_embed.unsqueeze(0), bs, axis=0)
-        query_pos = ops.repeat_elements(query_pos.unsqueeze(2),  query_embed.shape[2], axis=2)
-        text_embed = ops.repeat_elements(text_embed.unsqueeze(0), bs, axis=0)
+        query_embed = mnp.tile(query_embed.unsqueeze(0), (bs, 1, 1, 1))
+        query_pos = mnp.tile(query_pos.unsqueeze(2), (1, 1, query_embed.shape[2], 1))
+        text_embed = mnp.tile(text_embed.unsqueeze(0), (bs, 1, 1, 1))
 
         # decoder
         hs, hs_text, inter_references = self.decoder(
@@ -321,9 +321,9 @@ class TESTRDeformableTransformer(nn.Cell):
                 pos.append(pos_l)
 
         # n_points, embed_dim --> n_objects, n_points, embed_dim
-        ctrl_point_embed = ops.repeat_elements(self.ctrl_point_embed.embedding_table[None, ...], self.num_proposals, 0)
-        text_pos_embed = ops.repeat_elements(self.text_pos_embed(self.text_embed.embedding_table)[None, ...], self.num_proposals, 0)
-        text_embed = ops.repeat_elements(self.text_embed.embedding_table[None, ...], self.num_proposals, 0)
+        ctrl_point_embed = mnp.tile(self.ctrl_point_embed.embedding_table[None, ...], (self.num_proposals, 1, 1))
+        text_pos_embed = mnp.tile(self.text_pos_embed(self.text_embed.embedding_table)[None, ...], (self.num_proposals, 1, 1))
+        text_embed = mnp.tile(self.text_embed.embedding_table[None, ...], (self.num_proposals, 1, 1))
 
         hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.transformer(
             srcs, masks, pos, ctrl_point_embed, text_embed, text_pos_embed, text_mask=None)

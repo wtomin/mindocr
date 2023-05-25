@@ -74,7 +74,7 @@ class TESTRLabelEncode:
 
         data['polys'] = polys
         data['boxes'] = boxes
-        data['texts'] = txts
+        # data['texts'] = txts
         data['rec_ids'] = rec_ids
         data['ignore_tags'] = txt_tags
         data['gt_classes'] = np.zeros(len(txts), dtype=np.int32)
@@ -86,7 +86,9 @@ class PadTESTRLabel:
         assert 'polys' in self._affect_keys, "polys should be included in affect_keys"
     def __call__(self, data):
         nBox = len(data['polys'])
+        assert nBox>0, "nBox should be greater than 0"
         if nBox>=self.target_len:
+            print(f"nBox {nBox} is greater than target_len {self.target_len}, so we will truncate the data")
             for key in self._affect_keys:
                 data[key] = data[key][:self.target_len]
         else:

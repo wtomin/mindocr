@@ -202,7 +202,7 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         tgt_inter = ops.swapdims(self.norm_inter(tgt_inter), 1, 2) # -> (bs, n_objects, num_points, embed_dim)
 
         # cross attention
-        reference_points_loc = ops.repeat_elements(reference_points.unsqueeze(2), tgt_inter.shape[2], axis=2)
+        reference_points_loc = mnp.tile(reference_points.unsqueeze(2), (1, 1, tgt_inter.shape[2], 1, 1))
         tgt2 = self.attn_cross(self.with_pos_embed(tgt_inter, query_pos).reshape((bs, n_objects * num_points, embed_dim)),
                                key = None, value = src,
                                value_padding_mask = src_padding_mask, 
@@ -236,7 +236,7 @@ class DeformableCompositeTransformerDecoderLayer(nn.Cell):
         tgt_text_inter = ops.swapdims(self.norm_inter_text(tgt_text_inter), 1, 2)
 
         # text branch - cross attention
-        reference_points_loc = ops.repeat_elements(reference_points.unsqueeze(2), tgt_text_inter.shape[2], axis=2)
+        reference_points_loc = mnp.tile(reference_points.unsqueeze(2), (1, 1, tgt_text_inter.shape[2], 1, 1))
         tgt2_text_cm = self.attn_cross_text(self.with_pos_embed(tgt_text_inter, query_pos_text).reshape((bs, n_objects * num_chars, embed_dim)),
                             key = None, value = src,
                             value_padding_mask = src_padding_mask,

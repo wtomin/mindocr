@@ -354,12 +354,13 @@ class ValidatePolygons:
     Args:
         min_area: minimum area below which newly clipped polygons considered as ignored.
     """
-    def __init__(self, min_area: float = 1.0, affect_keys=['polys', 'texts', 'ignore_tags']):
+    def __init__(self, min_area: float = 1.0, affect_keys=['polys', 'ignore_tags']):
         self._min_area = min_area
         self._affect_keys = affect_keys
         assert 'image' not in affect_keys, "image must not be in the affect keys"
 
     def __call__(self, data: dict):
+        # get image size from the actual image/size or the mask
         if 'actual_size' in data:
             size = data['actual_size']
         elif 'image_mask' in data:
@@ -372,17 +373,19 @@ class ValidatePolygons:
             size = np.array(data['image'].shape[:2])
         size = size[::-1]# convert to x, y coord 
         border = box(0, 0, *size)
-        affect_keys = copy(self._affect_keys)
-        new_data = {}
-        for key in affect_keys:
-            new_data[key] = []
+        # affect_keys is a dictionary containing keys that will be affected by the polygon validation
+        affect_keys_without_polys = copy(self._affect_keys)
+        affect_keys_without_polys.pop(affect_keys_without_polys.index('polys'))
         assert 'polys' in data, "polys must be in the data"
-        affect_keys.pop(affect_keys.index('polys'))
+        update_data = {}
+        for key in self._affect_keys:
+            update_data[key] = []
+        
         for i, np_poly in enumerate(data['polys']):
             ignore = False
             include_poly = False
             if ((0 <= np_poly) & (np_poly < size)).all():   # if the polygon is fully within the image
-                new_data['polys'].append(np.concatenate([np_poly, np.ones((len(np_poly), 1))], axis=-1))
+                update_data['polys'].append(np.concatenate([np_poly, np.ones((len(np_poly), 1))], axis=-1))
                 include_poly = True
             else:
                 poly = Polygon(np_poly)
@@ -396,20 +399,33 @@ class ValidatePolygons:
                     # new_data['polys'].append(np.array(poly[:-1]))
                     inside = (np_poly >=np.array([0,0])) & (np_poly <= size)
                     inside = inside.all(axis=1)
-                    new_data['polys'].append(np.concatenate([np_poly, inside.astype('float32').reshape(-1,1)], axis=-1))
+                    update_data['polys'].append(np.concatenate([np_poly, inside.astype('float32').reshape(-1,1)], axis=-1))
                     include_poly = True
                 else:                                       # the polygon is fully outside the image
                     include_poly = False
             if include_poly:
-                for key in affect_keys: 
+                for key in affect_keys_without_polys: 
                     if key == 'ignore_tags':
-                        new_data[key].append(ignore)
+                        update_data[key].append(ignore)
                     else:
-                        new_data[key].append(data[key][i])
+                        update_data[key].append(data[key][i])
 
-        for key in data:
+        # update the data
+        data.update(update_data) # affect_keys will be replaced by the updated data
+        # change the data type
+        length = len(data['polys']) 
+        assert length>0, "length of polys must be greater than 0"
+        for key in data.keys():
             if key in self._affect_keys:
-                data[key] = new_data[key] if key not in ['polys', 'boxes', 'gt_classes', 'rec_ids'] else np.array(new_data[key])
+                assert len(data[key]) == length, f"length of {key} must be equal to length of {self._affect_keys[0]}"
+                if key in ['polys', 'boxes', 'ignore_tags', 'rec_ids', 'gt_classes']:
+                    data[key] = np.array(data[key])
+                    if key in ['polys', 'boxes']:
+                        data[key] = data[key].astype('float32')
+                    elif key in ['rec_ids', 'gt_classes']:
+                        data[key] = data[key].astype('int32')
+                    elif key in ['ignore_tags']:
+                        data[key] = data[key].astype('bool')
         return data
 
 class RandomCropWithInstances:
@@ -578,125 +594,125 @@ class ResizePadImage:
             data['boxes'] = data['boxes'] * scale
         return data
 
-class RandomCropWithInstances:
-    """
-    Randomly crop the image so that the cropping region contains all the bboxes/instances in the original image
-    Args:
-        crop_size (int): size of the crop.
-        crop_type (str): type of the crop. One of ['relative', 'absolute']
-        crop_box (bool): whether to allow cropping bounding boxes that are partially outside the image. 
-    """
-    def __init__(self, crop_size: int, crop_type:str, crop_box = True):
-        self._crop_type = crop_type
-        self._crop_box = crop_box
-        assert  self._crop_type in ['relative', 'absolute'], f"crop_type must be one of ['relative', 'absolute']. Got {self._crop_type}!"
-        if isinstance(crop_size, int):
-            self._crop_size = (crop_size, crop_size)
-        elif isinstance(crop_size, float):
-            self._crop_size = (crop_size, crop_size)
-        elif isinstance(crop_size, tuple):
-            assert len(crop_size) == 2, f"crop_size must be a tuple of length 2. Got {crop_size}!"
-            self._crop_size = crop_size
-    def __call__(self, data):
-        image_size = data['image'].shape[:2] # (H, W, C)
-        crop_size = np.array(self._crop_size, dtype=np.int32) if self._crop_type == 'absolute' else (image_size * np.array(self._crop_size)).astype(np.int32)
-        assert (crop_size < image_size).all(), f"crop_size must be smaller than image_size. Got {crop_size} and {image_size}!"
-        polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
-        # randomly select a polygon and find the the minimum and maximum coordinates for the crop box based on the center of the bounding box and the desired crop size.
-        bbox = random.choice(polys)
-        center_yx = np.mean(bbox, axis=0)[::-1]
-        min_yx = np.maximum(np.floor(center_yx).astype(np.int32) - crop_size, 0)
-        max_yx = np.maximum(np.asarray(image_size, dtype=np.int32) - crop_size, 0)
-        max_yx = np.minimum(max_yx, np.ceil(center_yx).astype(np.int32))
+# class RandomCropWithInstances:
+#     """
+#     Randomly crop the image so that the cropping region contains all the bboxes/instances in the original image
+#     Args:
+#         crop_size (int): size of the crop.
+#         crop_type (str): type of the crop. One of ['relative', 'absolute']
+#         crop_box (bool): whether to allow cropping bounding boxes that are partially outside the image. 
+#     """
+#     def __init__(self, crop_size: int, crop_type:str, crop_box = True):
+#         self._crop_type = crop_type
+#         self._crop_box = crop_box
+#         assert  self._crop_type in ['relative', 'absolute'], f"crop_type must be one of ['relative', 'absolute']. Got {self._crop_type}!"
+#         if isinstance(crop_size, int):
+#             self._crop_size = (crop_size, crop_size)
+#         elif isinstance(crop_size, float):
+#             self._crop_size = (crop_size, crop_size)
+#         elif isinstance(crop_size, tuple):
+#             assert len(crop_size) == 2, f"crop_size must be a tuple of length 2. Got {crop_size}!"
+#             self._crop_size = crop_size
+#     def __call__(self, data):
+#         image_size = data['image'].shape[:2] # (H, W, C)
+#         crop_size = np.array(self._crop_size, dtype=np.int32) if self._crop_type == 'absolute' else (image_size * np.array(self._crop_size)).astype(np.int32)
+#         assert (crop_size < image_size).all(), f"crop_size must be smaller than image_size. Got {crop_size} and {image_size}!"
+#         polys = [poly for poly, ignore in zip(data['polys'], data['ignore_tags']) if not ignore]
+#         # randomly select a polygon and find the the minimum and maximum coordinates for the crop box based on the center of the bounding box and the desired crop size.
+#         bbox = random.choice(polys)
+#         center_yx = np.mean(bbox, axis=0)[::-1]
+#         min_yx = np.maximum(np.floor(center_yx).astype(np.int32) - crop_size, 0)
+#         max_yx = np.maximum(np.asarray(image_size, dtype=np.int32) - crop_size, 0)
+#         max_yx = np.minimum(max_yx, np.ceil(center_yx).astype(np.int32))
 
-        y0 = np.random.randint(min_yx[0], max_yx[0] + 1)
-        x0 = np.random.randint(min_yx[1], max_yx[1] + 1)
-        # if some instance is cropped extend the box
-        if not self._crop_box:
-            num_modifications = 0
-            modified = True
+#         y0 = np.random.randint(min_yx[0], max_yx[0] + 1)
+#         x0 = np.random.randint(min_yx[1], max_yx[1] + 1)
+#         # if some instance is cropped extend the box
+#         if not self._crop_box:
+#             num_modifications = 0
+#             modified = True
 
-            # convert crop_size to float
-            crop_size = crop_size.astype(np.float32)
-            while modified:
-                modified, x0, y0, crop_size = self.adjust_crop(x0, y0, crop_size, polys)
-                num_modifications += 1
-                if num_modifications > 100:
-                    raise ValueError(
-                        "Cannot finished cropping adjustment within 100 tries (#instances {}).".format(
-                            len(polys)
-                        )
-                    )
-        # crop the image
-        data['image'] = data['image'][y0:y0 + crop_size[0], x0:x0 + crop_size[1]]
-        # crop the polygons
-        data['polys'] = np.array([poly - np.array([x0, y0]) for poly in data['polys']])
-        # crop the bounding boxes
-        if 'boxes' in data:
-            data['boxes'] = np.array([box - np.array([x0, y0])  for box in data['boxes']])
-        return data
+#             # convert crop_size to float
+#             crop_size = crop_size.astype(np.float32)
+#             while modified:
+#                 modified, x0, y0, crop_size = self.adjust_crop(x0, y0, crop_size, polys)
+#                 num_modifications += 1
+#                 if num_modifications > 100:
+#                     raise ValueError(
+#                         "Cannot finished cropping adjustment within 100 tries (#instances {}).".format(
+#                             len(polys)
+#                         )
+#                     )
+#         # crop the image
+#         data['image'] = data['image'][y0:y0 + crop_size[0], x0:x0 + crop_size[1]]
+#         # crop the polygons
+#         data['polys'] = np.array([poly - np.array([x0, y0]) for poly in data['polys']])
+#         # crop the bounding boxes
+#         if 'boxes' in data:
+#             data['boxes'] = np.array([box - np.array([x0, y0])  for box in data['boxes']])
+#         return data
         
-    def adjust_crop(self, x0, y0, crop_size, instances, eps=1e-3):
-        modified = False
+#     def adjust_crop(self, x0, y0, crop_size, instances, eps=1e-3):
+#         modified = False
 
-        x1 = x0 + crop_size[1]
-        y1 = y0 + crop_size[0]
+#         x1 = x0 + crop_size[1]
+#         y1 = y0 + crop_size[0]
 
-        for bbox in instances:
-            xmin, ymin = np.min(bbox, axis=0)[0], np.min(bbox, axis=0)[1]
-            xmax, ymax = np.max(bbox, axis=0)[0], np.max(bbox, axis=0)[1]
-            if xmin < x0 - eps and xmax > x0 + eps:
-                #If the bounding box intersects with the left side of the crop box
-                crop_size[1] += x0 - xmin
-                x0 = xmin
-                modified = True 
+#         for bbox in instances:
+#             xmin, ymin = np.min(bbox, axis=0)[0], np.min(bbox, axis=0)[1]
+#             xmax, ymax = np.max(bbox, axis=0)[0], np.max(bbox, axis=0)[1]
+#             if xmin < x0 - eps and xmax > x0 + eps:
+#                 #If the bounding box intersects with the left side of the crop box
+#                 crop_size[1] += x0 - xmin
+#                 x0 = xmin
+#                 modified = True 
 
-            if xmin < x1 - eps and xmax > x1 + eps:
-                crop_size[1] += xmax - x1
-                x1 = xmax
-                modified = True
+#             if xmin < x1 - eps and xmax > x1 + eps:
+#                 crop_size[1] += xmax - x1
+#                 x1 = xmax
+#                 modified = True
 
-            if ymin < y0 - eps and ymax > y0 + eps:
-                crop_size[0] += y0 - ymin
-                y0 = ymin
-                modified = True
+#             if ymin < y0 - eps and ymax > y0 + eps:
+#                 crop_size[0] += y0 - ymin
+#                 y0 = ymin
+#                 modified = True
 
-            if ymin < y1 - eps and ymax > y1 + eps:
-                crop_size[0] += ymax - y1
-                y1 = ymax
-                modified = True
+#             if ymin < y1 - eps and ymax > y1 + eps:
+#                 crop_size[0] += ymax - y1
+#                 y1 = ymax
+#                 modified = True
 
-        return modified, x0, y0, crop_size
+#         return modified, x0, y0, crop_size
 
-class PadImage:
-    """
-    Pad the image to the specified size.
-    Args:
-        pad_size (int): size of the padding.
-        size_type (str): type of the padding. One of ['relative', 'absolute']
-    """
-    def __init__(self, pad_size, size_type='absolute'):
-        self._pad_size = pad_size
-        self._size_type = size_type
-        assert  self._size_type in ['relative', 'absolute'], f"size_type must be one of ['relative', 'absolute']. Got {self._size_type}!"
-        if isinstance(pad_size, int):
-            self._pad_size = (pad_size, pad_size)
-        elif isinstance(pad_size, float):
-            self._pad_size = (pad_size, pad_size)
-        elif isinstance(pad_size, tuple):
-            assert len(pad_size) == 2, f"pad_size must be a tuple of length 2. Got {pad_size}!"
-            self._pad_size = pad_size
+# class PadImage:
+#     """
+#     Pad the image to the specified size.
+#     Args:
+#         pad_size (int): size of the padding.
+#         size_type (str): type of the padding. One of ['relative', 'absolute']
+#     """
+#     def __init__(self, pad_size, size_type='absolute'):
+#         self._pad_size = pad_size
+#         self._size_type = size_type
+#         assert  self._size_type in ['relative', 'absolute'], f"size_type must be one of ['relative', 'absolute']. Got {self._size_type}!"
+#         if isinstance(pad_size, int):
+#             self._pad_size = (pad_size, pad_size)
+#         elif isinstance(pad_size, float):
+#             self._pad_size = (pad_size, pad_size)
+#         elif isinstance(pad_size, tuple):
+#             assert len(pad_size) == 2, f"pad_size must be a tuple of length 2. Got {pad_size}!"
+#             self._pad_size = pad_size
     
-    def __call__(self, data):
-        # pad the image to the specified size
-        image_size = data['image'].shape[:2] # (H, W, C)
-        pad_size = np.array(self._pad_size, dtype=np.int32) if self._size_type == 'absolute' else (image_size * np.array(self._pad_size)).astype(np.int32)
-        data['image'] = np.pad(data['image'],
-                               (*tuple((0, cs - ds) for cs, ds in zip(pad_size, data['image'].shape[:2])), (0, 0)))
+#     def __call__(self, data):
+#         # pad the image to the specified size
+#         image_size = data['image'].shape[:2] # (H, W, C)
+#         pad_size = np.array(self._pad_size, dtype=np.int32) if self._size_type == 'absolute' else (image_size * np.array(self._pad_size)).astype(np.int32)
+#         data['image'] = np.pad(data['image'],
+#                                (*tuple((0, cs - ds) for cs, ds in zip(pad_size, data['image'].shape[:2])), (0, 0)))
 
-        # create image mask
-        image_mask = np.ones(pad_size, dtype=np.uint8)
-        image_mask[:image_size[0], :image_size[1]] =0
-        data['image_mask'] = image_mask
-        return data
+#         # create image mask
+#         image_mask = np.ones(pad_size, dtype=np.uint8)
+#         image_mask[:image_size[0], :image_size[1]] =0
+#         data['image_mask'] = image_mask
+#         return data
     

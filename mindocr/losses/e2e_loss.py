@@ -44,10 +44,11 @@ class SigmoidFocalLoss(nn.Cell):
         if self.alpha >= 0:
             alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
             loss = alpha_t * loss
-
         if loss.ndim == 4:
+            # loss shape (N, num_queries, num_points, num_classes)
             return loss.mean(1).mean(1).sum() / num_inst
         elif loss.ndim == 3:
+            # loss shape (N, num_queries, num_classes)
             return loss.mean(1).sum() / num_inst
         else:
             raise NotImplementedError(f"Unsupported dim {loss.ndim}")
@@ -100,7 +101,7 @@ class TESTRLoss(LossBase):
         self.focal_gamma = focal_gamma
         self.num_ctrl_points = num_ctrl_points
         self.use_polygon = use_polygon
-        self.binary_cross_entropy = ops.SoftmaxCrossEntropyWithLogits()
+        self.cross_entropy_with_logits = ops.SoftmaxCrossEntropyWithLogits()
         self.l1_loss = nn.L1Loss(reduction='sum')
         self.sigmoid_focal_loss = SigmoidFocalLoss(alpha=focal_alpha, gamma=focal_gamma)
     @classmethod
@@ -139,23 +140,24 @@ class TESTRLoss(LossBase):
         Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
-        src_logits = outputs['pred_logits']
+        src_logits = outputs['pred_logits'] #(bs, num_queries, n_points, num_classes-1)
 
         idx = self.get_src_permutation_idx(indices)
-        target_classes = mnp.full_like(src_logits[..., 0], self.num_classes, dtype=mstype.int32)
+        target_classes = mnp.full(src_logits.shape[:-1], self.num_classes, dtype=mstype.int32)
         target_classes_o = ops.concat([t["labels"][J]  for t, (_, J) in zip(targets, indices)])
         if len(target_classes_o.shape) < len(target_classes[idx].shape):
             target_classes_o = target_classes_o[..., None]
         target_classes[idx] = target_classes_o
 
         shape = list(src_logits.shape)
-        shape[-1] += 1
+        shape[-1] += 1 # (Bs, N_proposals, n_points, N_classes + 1)
         target_classes_onehot = ops.zeros(shape, dtype=mstype.int32)
+        rep_shapes =  [1] * (len(shape)-1) + [self.num_classes + 1]
         target_classes_onehot = ops.scatter(target_classes_onehot, -1, 
-                                            ops.repeat_elements(target_classes.unsqueeze(-1), 2, -1), 
+                                            mnp.tile(target_classes.unsqueeze(-1), rep_shapes), 
                                             ops.ones(shape, mstype.int32))
         target_classes_onehot = target_classes_onehot[..., :-1]
-        import pdb; pdb.set_trace()
+        # whether to use mask to remove unvisible points?
         loss_ce = self.sigmoid_focal_loss(src_logits, target_classes_onehot.float(), num_inst) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
@@ -164,20 +166,20 @@ class TESTRLoss(LossBase):
             losses['class_error'] = 100 - \
                 accuracy(src_logits[idx], target_classes_o)[0]
         return losses
-    #@_stop_grad
-    def loss_cardinality(self, outputs, targets, indices, num_inst):
-        """
-        Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
-        This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
-        """
-        pred_logits = outputs['pred_logits']
-        device = pred_logits.device
-        tgt_lengths = ops.tensor.Tensor(np.as_tensor(
-            [len(v["labels"]) for v in targets], device=device))
-        card_pred = (pred_logits.mean(-2).argmax(-1) == 0).sum(1)
-        card_err = self.l1_loss((Tensor(ops.asnumpy(card_pred), dtype=ops.float32)), (Tensor(ops.asnumpy(tgt_lengths), dtype=ops.float32)))
-        losses = {'cardinality_error': card_err}
-        return losses
+    
+    # def loss_cardinality(self, outputs, targets, indices, num_inst):
+    #     """
+    #     Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
+    #     This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
+    #     """
+    #     pred_logits = outputs['pred_logits']
+    #     device = pred_logits.device
+    #     tgt_lengths = ops.tensor.Tensor(np.as_tensor(
+    #         [len(v["labels"]) for v in targets], device=device))
+    #     card_pred = (pred_logits.mean(-2).argmax(-1) == 0).sum(1)
+    #     card_err = self.l1_loss((Tensor(ops.asnumpy(card_pred), dtype=ops.float32)), (Tensor(ops.asnumpy(tgt_lengths), dtype=ops.float32)))
+    #     losses = {'cardinality_error': card_err}
+    #     return losses
 
     def loss_boxes(self, outputs, targets, indices, num_inst):
         """
@@ -188,43 +190,43 @@ class TESTRLoss(LossBase):
         
         idx = self.get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
-        target_boxes = ops.concatenate([t['boxes'][i]
-                                for t, (_, i) in zip(targets, indices)], axis=0)
+        target_boxes = ops.concat([t['boxes'][i]  for t, (_, i) in zip(targets, indices)], axis=0)
 
-        loss_bbox = self.l1_loss(src_boxes, target_boxes)
+        loss_bbox = self.l1_loss(src_boxes, target_boxes) # reduction=sum
 
         losses = {}
-        losses['loss_bbox'] = loss_bbox.sum() / num_inst
-
-        loss_giou = 1 - ops.diag(generalized_box_iou(
-            box_cxcywh_to_xyxy(src_boxes),
-            box_cxcywh_to_xyxy(target_boxes)))
+        losses['loss_bbox'] = loss_bbox / num_inst
+        giou = generalized_box_iou( box_cxcywh_to_xyxy(src_boxes), box_cxcywh_to_xyxy(target_boxes))
+        loss_giou = 1 - ops.diagonal(giou)
         losses['loss_giou'] = loss_giou.sum() / num_inst
         return losses
 
     def loss_texts(self, outputs, targets, indices, num_inst):
         assert 'pred_texts' in outputs
         idx = self.get_src_permutation_idx(indices)
-        src_texts = outputs['pred_texts'][idx]
-        target_texts = mnp.concatenate([t['texts'][i] for t, (_, i) in zip(targets, indices)], axis=0)
-        shape = src_texts.shape
+        src_texts = outputs['pred_texts'][idx] 
+        target_texts = mnp.concatenate([t['texts'][i] for t, (_, i) in zip(targets, indices)], axis=0) #(num_instances, max_text_len)
+        shape = src_texts.shape #(num_instances, max_text_len, dict_size)
         num_classes = shape[-1]
-        target_texts_onehot = ops.zeros(shape, dtype=target_texts.dtype).scatter(-1, 
-                                                                                 ops.repeat_elements(target_texts.unsqueeze(-1), num_classes, -1), 
-                                                                                 ops.ones(shape, target_texts.dtype))
-        loss_texts = self.binary_cross_entropy(src_texts.reshape((-1, num_classes)), target_texts_onehot.reshape((-1, num_classes)))
-        return {'loss_texts': loss_texts}
+        target_texts_onehot = ops.zeros(shape, dtype=src_texts.dtype)
+        rep_shapes =  [1] * (len(shape)-1) + [num_classes]
+        target_texts_onehot = ops.scatter(target_texts_onehot, -1, 
+                                          mnp.tile(target_texts.unsqueeze(-1), rep_shapes), 
+                                          ops.ones(shape, src_texts.dtype))
+
+        loss_texts, _ = self.cross_entropy_with_logits(src_texts.reshape(-1, num_classes), target_texts_onehot.reshape(-1, num_classes))
+        return {'loss_texts': loss_texts.mean()}
 
     def loss_ctrl_points(self, outputs, targets, indices, num_inst):
         """Compute the losses related to the keypoint coordinates, the L1 regression loss
+           Use the visible mask to remove unvisible points
         """
         assert 'pred_ctrl_points' in outputs
         idx = self.get_src_permutation_idx(indices)
         src_ctrl_points = outputs['pred_ctrl_points'][idx]
         target_ctrl_points = mnp.concatenate([t['ctrl_points'][i][:,:,:2] for t, (_, i) in zip(targets, indices)], axis=0)
-        target_ctrl_points_vis = mnp.concatenate([t['ctrl_points'][i][:,:,2] for t, (_, i) in zip(targets, indices)], axis=0)
-        mask = (target_ctrl_points_vis == 1).unsqueeze(-1)
-        mask = ops.concat([mask, mask], axis=-1)
+        target_ctrl_points_vis = mnp.concatenate([t['ctrl_points'][i][:,:,2:] for t, (_, i) in zip(targets, indices)], axis=0)
+        mask = ops.concat([target_ctrl_points_vis, target_ctrl_points_vis], axis=-1) == 1
         loss_ctrl_points = self.l1_loss(src_ctrl_points[mask], target_ctrl_points[mask]) # reduction = sum?
 
         losses = {'loss_ctrl_points': loss_ctrl_points / num_inst}
@@ -238,13 +240,13 @@ class TESTRLoss(LossBase):
         src_idx = mnp.concatenate([src for (src, _) in indices])
         return batch_idx, src_idx
 
-    @staticmethod
-    def get_tgt_permutation_idx(indices):
-        # permute targets following indices
-        batch_idx = mnp.concatenate([mnp.full_like(tgt, i)
-                               for i, (_, tgt) in enumerate(indices)])
-        tgt_idx = mnp.concatenate([tgt for (_, tgt) in indices])
-        return batch_idx, tgt_idx
+    # @staticmethod
+    # def get_tgt_permutation_idx(indices):
+    #     # permute targets following indices
+    #     batch_idx = mnp.concatenate([mnp.full_like(tgt, i)
+    #                            for i, (_, tgt) in enumerate(indices)])
+    #     tgt_idx = mnp.concatenate([tgt for (_, tgt) in indices])
+    #     return batch_idx, tgt_idx
 
 
     def prepare_targets(self, targets):
@@ -277,7 +279,7 @@ class TESTRLoss(LossBase):
     def get_loss(self, loss_name, outputs, targets, indices, num_inst, **kwargs):
         loss_map = {
             'labels': self.loss_labels,
-            'cardinality': self.loss_cardinality,
+            #'cardinality': self.loss_cardinality,
             'ctrl_points': self.loss_ctrl_points,
             'boxes': self.loss_boxes,
             'texts': self.loss_texts,
@@ -312,21 +314,21 @@ class TESTRLoss(LossBase):
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
             for i, aux_outputs in enumerate(outputs['aux_outputs']):
-                indices = self.dec_matcher(aux_outputs, targets)
+                indices = ops.stop_gradient(self.dec_matcher(aux_outputs, targets['dec']))
                 for loss in self.dec_losses:
                     kwargs = {}
                     if loss == 'labels':
                         # Logging is enabled only for the last layer
                         kwargs['log'] = False
                     l_dict = self.get_loss(
-                        loss, aux_outputs, targets, indices, num_inst, **kwargs)
+                        loss, aux_outputs, targets['dec'], indices, num_inst, **kwargs)
                     l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
                     losses.update(l_dict)
 
-        # In case of encoder losses, we repeat this process with the output of each intermediate layer.
+        # In case of encoder losses, we compute the loss for labels and boxes
         if 'enc_outputs' in outputs:
             enc_outputs = outputs['enc_outputs']
-            indices = self.enc_matcher(enc_outputs, targets)
+            indices = self.enc_matcher(enc_outputs, targets['enc'])
             for loss in self.enc_losses:
                 kwargs = {}
                 if loss == 'labels':
@@ -339,5 +341,6 @@ class TESTRLoss(LossBase):
         for k in losses.keys():
             if k in weight_dict:
                 losses[k] *= weight_dict[k]
-        losses = sum(losses.values()) # return the weighted sum of all losses
-        return losses
+        
+        return sum(losses.values()) # return the weighted sum of all losses
+        
