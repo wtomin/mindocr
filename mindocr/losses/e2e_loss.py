@@ -2,8 +2,8 @@ from typing import Optional, List, Tuple
 import math
 import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
-from mindspore.communication._comm_helper import GlobalComm
-from mindspore.communication import get_group_size
+#from mindspore.communication._comm_helper import GlobalComm
+#from mindspore.communication import get_group_size
 from mindspore.ops import operations as P
 from mindspore.ops import functional as F
 import numpy as np
@@ -235,18 +235,10 @@ class TESTRLoss(LossBase):
     @staticmethod
     def get_src_permutation_idx(indices):
         # permute predictions following indices
-        batch_idx = mnp.concatenate([mnp.full_like(src, i)
-                               for i, (src, _) in enumerate(indices)])
+        len_indices = len(indices)
+        batch_idx = mnp.concatenate([mnp.full_like(indices[i][0], i) for i in range(len_indices)])
         src_idx = mnp.concatenate([src for (src, _) in indices])
         return batch_idx, src_idx
-
-    # @staticmethod
-    # def get_tgt_permutation_idx(indices):
-    #     # permute targets following indices
-    #     batch_idx = mnp.concatenate([mnp.full_like(tgt, i)
-    #                            for i, (_, tgt) in enumerate(indices)])
-    #     tgt_idx = mnp.concatenate([tgt for (_, tgt) in indices])
-    #     return batch_idx, tgt_idx
 
 
     def prepare_targets(self, targets):
@@ -288,22 +280,23 @@ class TESTRLoss(LossBase):
             raise ValueError(f"Do you really want to compute {loss_name} loss?")
         return loss_map[loss_name](outputs, targets, indices, num_inst, **kwargs)
 
-    def construct(self, outputs, targets):
+    def construct(self, outputs, image_size, polys, boxes, rec_ids, ignore_tags, gt_classes):
+        #outputs is a dictionary containing the outputs of the model.
         # change the targets
+        targets = {'image_size': image_size, 'polys': polys, 'boxes': boxes, 'rec_ids': rec_ids, 'ignore_tags': ignore_tags, 'gt_classes': gt_classes}
         targets = self.prepare_targets(targets)
         # Remove auxiliary outputs from the outputs
-        outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'}
-
+        outputs_without_aux = dict([(k, v) for k, v in outputs.items() if k != 'aux_outputs' and k != 'enc_outputs'])
         # Retrieve the matching between the outputs of the last layer and the targets
         indices = ops.stop_gradient(self.dec_matcher(outputs_without_aux, targets['dec']))
 
         # Compute the average number of target boxes across all nodes, for normalization purposes
         num_inst = sum(len(t['ctrl_points']) for t in targets['dec'])
         num_inst = Tensor([num_inst], dtype=mstype.float32)
-        if GlobalComm.INITED: # distributed training
-            P.AllReduce()(num_inst)
-        num_inst = num_inst / (1 if not GlobalComm.INITED else get_group_size())
-        num_inst = ops.clip_by_value(num_inst, 1, num_inst).asnumpy()[0]
+        # if GlobalComm.INITED: # distributed training
+        #     P.AllReduce()(num_inst)
+        # num_inst = num_inst / (1 if not GlobalComm.INITED else get_group_size())
+        # num_inst = ops.clip_by_value(num_inst, 1, num_inst).asnumpy()[0]
 
         # Compute all the requested losses
         losses = {}
@@ -313,7 +306,8 @@ class TESTRLoss(LossBase):
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if 'aux_outputs' in outputs:
-            for i, aux_outputs in enumerate(outputs['aux_outputs']):
+            for i in range(len(outputs['aux_outputs'])):
+                aux_outputs = outputs['aux_outputs'][i]
                 indices = ops.stop_gradient(self.dec_matcher(aux_outputs, targets['dec']))
                 for loss in self.dec_losses:
                     kwargs = {}
@@ -322,7 +316,7 @@ class TESTRLoss(LossBase):
                         kwargs['log'] = False
                     l_dict = self.get_loss(
                         loss, aux_outputs, targets['dec'], indices, num_inst, **kwargs)
-                    l_dict = {k + f'_{i}': v for k, v in l_dict.items()}
+                    l_dict = dict([(k + f'_{i}', v) for k, v in l_dict.items()])
                     losses.update(l_dict)
 
         # In case of encoder losses, we compute the loss for labels and boxes
@@ -334,13 +328,12 @@ class TESTRLoss(LossBase):
                 if loss == 'labels':
                     kwargs['log'] = False
                 l_dict = self.get_loss(loss, enc_outputs, targets['enc'], indices, num_inst, **kwargs)
-                l_dict = {k + f'_enc': v for k, v in l_dict.items()}
+                l_dict = dict([(k + f'_enc', v) for k, v in l_dict.items()])
                 losses.update(l_dict)
         
         weight_dict = self.weight_dict
         for k in losses.keys():
             if k in weight_dict:
                 losses[k] *= weight_dict[k]
-        
-        return sum(losses.values()) # return the weighted sum of all losses
+        return sum(losses.values()).item() # return the weighted sum of all losses
         

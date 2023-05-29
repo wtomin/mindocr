@@ -5,7 +5,10 @@ from mindocr.models.layers import MultiScaleDeformableAttention, DeformableTrans
                                   DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,\
                                   PositionalEncoding1D, PositionalEncoding2D
                                   
-from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
+try :
+    from mindspore.nn.transformer.op_parallel_config import default_dpmp_config
+except:
+    from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
 import copy
 from typing import Optional, List, Tuple
 import math
@@ -89,7 +92,7 @@ class DeformableTransformer(nn.Cell):
             valid_H = (~mask_flatten[:, :, 0, 0]).sum(1)
             valid_W = (~mask_flatten[:, 0, :, 0]).sum(1)
 
-            grid_y, grid_x = ops.meshgrid(ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
+            grid_y, grid_x = mnp.meshgrid(ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
                                         ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(W - 1, dtype=mstype.float32), W))
             grid = ops.concat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)],-1 )
 
@@ -142,8 +145,9 @@ class DeformableTransformer(nn.Cell):
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
-
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+        N_levels = len(srcs)
+        for lvl in range(N_levels):
+            src, mask, pos_embed = srcs[lvl], masks[lvl], pos_embeds[lvl]
             bs, c, h, w = src.shape
             spatial_shapes.append((h, w))
             src = ops.transpose(src.reshape((bs, c, -1)), (0, 2, 1))
@@ -288,33 +292,28 @@ class TESTRDeformableTransformer(nn.Cell):
 
         self.out_channels = self.hidden_size # it is for argument setting, not used by the TESTRHead
     
-    def construct(self, samples):
-        features, pos = samples
+    def construct(self, features, masks, pos):
 
         if self.num_levels == 1:
             features = [features[-1]]
             pos = [pos[-1]]
 
         srcs = []
-        masks = []
-        for l, feature in enumerate(features):
-            src, mask = feature['tensor'], feature['mask']
+        for l in range(len(features)):
+            src = features[l]
             srcs.append(self.input_proj[l](src))
-            masks.append(mask)
+            mask = masks[l]
             assert mask is not None
         if self.num_levels > len(srcs):
             pos_encoder = PositionalEncoding2D(self.hidden_size//2, normalize=True)
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_levels):
                 if l == _len_srcs:
-                    src = self.input_proj[l](features[-1]['tensor'])
+                    src = self.input_proj[l](features[-1])
                 else:
                     src = self.input_proj[l](srcs[-1])
                 m = masks[0]
-                try:
-                    mask = ops.interpolate(m[ None].float(), size=(10,10) , mode='bilinear')[0].bool()
-                except:
-                    mask = ops.interpolate(m[ None].float(), sizes=(10,10) , mode='bilinear')[0].bool()
+                mask = ops.interpolate(m[ None].float(), sizes=src.shape[-2:] , mode='bilinear')[0].bool() # sizes or size depending on the version of mindspore
                 pos_l = pos_encoder(mask)
                 srcs.append(src)
                 masks.append(mask)

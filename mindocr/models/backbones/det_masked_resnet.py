@@ -1,5 +1,6 @@
 from typing import Tuple, List
 from mindspore import Tensor, nn, ops
+import mindspore.numpy as mnp
 import mindspore.common.dtype as mstype
 from .mindcv_models.resnet import ResNet, Bottleneck, default_cfgs
 from .mindcv_models.utils import load_pretrained
@@ -13,7 +14,7 @@ class MaskedResNet(ResNet):
     """
     A resnet backbone accepting a NestedTensor as input, which has tensors and masks, image_sizes attributes.
     """
-    def __init__(self, block, layers, num_levels, **kwargs):
+    def __init__(self, block, layers, num_levels, hidden_size, **kwargs):
         super().__init__(block, layers, **kwargs)
         del self.pool, self.classifier  # remove the original header to avoid confusion
         # self.out_indices = out_indices
@@ -23,13 +24,12 @@ class MaskedResNet(ResNet):
         self.out_channels = [out_channels[i] for i in range(4 - self.num_levels, 4)]
         out_strides = [4, 8, 16, 32]
         self.feature_strides = [out_strides[i] for i in range(4 - self.num_levels, 4)]
+        self.positional_encoder = PositionalEncoding2D(hidden_size//2, normalize=True)
     
 
-    def construct(self, images: List[Tensor]) -> List[Tensor]:
+    def construct(self, image, image_mask, image_size):
         #images = self.preprocess_image(images)
-        # images is a dictionary: {'image': image, 'image_mask': mask, 'image_size': image_size}
-        assert isinstance(images, dict), "images should be a dictionary! got {}".format(type(images))
-        x = images['image']
+        x = image
         # basic stem
         x = self.conv1(x)  # stride: 2
         x = self.bn1(x)
@@ -44,23 +44,32 @@ class MaskedResNet(ResNet):
         multi_level_features =  [x2, x3, x4]
         masks = self.mask_out_padding(
             [features_per_level.shape for features_per_level in multi_level_features],
-            images['image_size']
+            image_size
         )
-        output_features = [dict({'tensor': multi_level_features[i], 'mask': masks[i]}) for i in range(self.num_levels)]
-        return output_features
+
+        # output_features = [[multi_level_features[i],  masks[i]] for i in range(self.num_levels)]
+        pos = []
+        for i in range(len(multi_level_features)):
+            # position encoding
+            pos.append(self.positional_encoder(masks[i]))
+        return multi_level_features, masks, pos
         
-    def mask_out_padding(self, feature_shapes, image_sizes):
+    def mask_out_padding(self, multilevel_feat_shapes, image_sizes):
         masks = []
-        assert len(feature_shapes) == len(self.feature_strides), "expected to get the same number of feature shapes and feature strides."
-        for idx, shape in enumerate(feature_shapes):
-            N, _, H, W = shape
-            masks_per_feature_level = ops.ones((N, H, W), dtype=mstype.bool_)
-            for img_idx, (h, w) in enumerate(image_sizes):
-                masks_per_feature_level[
-                    img_idx,
-                    : int(math.ceil(float(h) / self.feature_strides[idx])),
-                    : int(math.ceil(float(w) / self.feature_strides[idx])),
-                ] = 0
+        assert len(multilevel_feat_shapes) == len(self.feature_strides), "expected to get the same number of feature shapes and feature strides."
+        N_levels = len(multilevel_feat_shapes)
+        for idx in range(N_levels):
+            N, _, H, W = multilevel_feat_shapes[idx]
+            masks_per_feature_level = ops.ones((N, H, W), type=mstype.bool_) # dtype or type depends on the version of mindspore
+            N_imgs_batch = len(image_sizes)
+            image_sizes = image_sizes.float() # convert to float
+            for img_idx in range(N_imgs_batch):
+                h, w = image_sizes[img_idx]
+                h_i , w_i = Tensor(mnp.ceil(h / self.feature_strides[idx]), mstype.int32), Tensor( mnp.ceil( w / self.feature_strides[idx]), mstype.int32)
+                #ValueError: When using JIT Fallback to handle script 'math.ceil(float(h) / self.feature_strides[idx])', 
+                # the inputs should be constant, but found variable 'AbstractScalar(Type: String, Value: h, Shape: NoShape)' 
+                # to be nonconstant.
+                masks_per_feature_level[img_idx, :h_i, :w_i] = 0
             masks.append(masks_per_feature_level)
         return masks
 
@@ -75,36 +84,37 @@ def det_masked_resnet50(pretrained: bool = True, num_levels: int = 3,  **kwargs)
 
     return model
 
-class Joiner(nn.SequentialCell):
-    """
-    A SequentialCell that joins the backbone and the position encoding.
-    """
-    def __init__(self, backbone, position_embedding):
-        super().__init__(backbone, position_embedding)
-        self.num_levels = backbone.num_levels
+# class Joiner(nn.Cell):
+#     """
+#     A Cell that joins the backbone and the position encoding.
+#     """
+#     def __init__(self, backbone, position_embedding):
+#         super().__init__()
+#         self.backbone = backbone
+#         self.positional_embedding = position_embedding
+#         self.num_levels = backbone.num_levels
 
-        self.out_channels = backbone.out_channels
-        self.feature_strides = backbone.feature_strides
+#         self.out_channels = backbone.out_channels
+#         self.feature_strides = backbone.feature_strides
      
-    def construct(self, inputs):
-        xs = self[0](inputs) # backbone returns a list of dictonaries for multilevels features and masks
-        masks = [x['mask'] for x in xs]
-        out = []
-        pos = []
-        for i in range(len(xs)):
-            out.append(xs[i])
-            # position encoding
-            pos.append(self[1](masks[i]))
+#     def construct(self, *inputs):
+#         xs = self.backbone(*inputs) # backbone returns a list of lists consists of features and masks
+#         out = []
+#         pos = []
+#         for i in range(len(xs[0])):
+#             out.append(xs[0][i])
+#             # position encoding
+#             pos.append(self.positional_embedding(xs[1][i]))
 
-        return out, pos
+#         return out, pos #xs[0], mask_pos
 
 @register_backbone
 def det_masked_joiner_resnet50(pretrained: bool = True, num_levels: int = 3, hidden_size: int = 256, **kwargs):
-    model = MaskedResNet(Bottleneck, [3, 4, 6, 3], num_levels, **kwargs)
+    model = MaskedResNet(Bottleneck, [3, 4, 6, 3], num_levels, hidden_size, **kwargs)
 
     # load pretrained weights
     if pretrained:
         default_cfg = default_cfgs['resnet50']
         load_pretrained(model, default_cfg)
 
-    return Joiner(model, PositionalEncoding2D(hidden_size//2, normalize=True))
+    return model

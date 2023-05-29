@@ -82,7 +82,8 @@ class CtrlPointHungarianMatcher(nn.Cell):
         C = C.view(bs, num_queries, -1)
 
         sizes = [len(v["ctrl_points"]) for v in targets]
-        indices_list = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+        C_splits = C.split(sizes, -1)
+        indices_list = [linear_sum_assignment(C_splits[i][i]) for i  in range(len(C_splits))]
         return [(Tensor(i, mstype.int64), Tensor(j, mstype.int64)) for i, j in indices_list]
 
 
@@ -165,8 +166,8 @@ class BoxHungarianMatcher(nn.Cell):
         C = C.view(bs, num_queries, -1)
 
         sizes = [len(v["boxes"]) for v in targets]
-        indices = [linear_sum_assignment(
-            c[i]) for i, c in enumerate(C.split(sizes, -1))]
+        C_splits = C.split(sizes, -1)
+        indices = [linear_sum_assignment(C_splits[i][i]) for i in range(len(C_splits))]
         return [(Tensor(i, mstype.int64), Tensor(j, mstype.int64)) for i, j in indices]
 
 def build_matcher(cfg):

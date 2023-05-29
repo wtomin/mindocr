@@ -105,9 +105,9 @@ def main(cfg):
                                        loss_fn,
                                        pred_cast_fp32=(amp_level!='O0'),
                                        input_indices=cfg.train.dataset.pop('net_input_column_index', None),
+                                       aux_input_indices=cfg.train.dataset.pop('net_aux_input_column_index', None),
+                                       column_names=cfg.train.dataset.get('output_columns', None),
                                        label_indices=cfg.train.dataset.pop('label_column_index', None),
-                                       column_names = cfg.train.dataset.get('output_columns', None),
-                                       inputs_outputs_type = cfg.model.get('inputs_outputs_type', None),
                                     )  # wrap train-one-step cell
 
     # get loss scale setting for mixed precision training
@@ -201,8 +201,9 @@ def main(cfg):
         with open(os.path.join(cfg.train.ckpt_save_dir, 'args.yaml'), 'w') as f:
             args_text = yaml.safe_dump(cfg.to_dict(), default_flow_style=False, sort_keys=False)
             f.write(args_text)
-    for x in loader_train:
-        print()
+    from tqdm import tqdm
+    for x in tqdm(loader_train):
+        x = x
         break
     # training
     model = ms.Model(train_net)

@@ -2,14 +2,15 @@ from .deformable_attention import MultiScaleDeformableAttention
 from typing import Optional, List, Tuple
 import math
 import mindspore as ms
+import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype
 
 from mindspore.common import initializer 
 try:
-    from mindspore import _checkparam as validator
+    from mindspore._checkparam import Validator as validator #<=2.0.0a1
 except ImportError:
-    from mindspore._checkparam import Validator as validator
+    from mindspore import _checkparam as validator
 from mindspore import log as logger
 from mindspore.parallel._utils import _get_parallel_mode, _is_sharding_propagation
 from mindspore.context import ParallelMode
@@ -186,7 +187,7 @@ class DeformableTransformerEncoder(nn.Cell):
         reference_points_list = []
         for lvl, (H, W) in enumerate(spatial_shapes):
             # Create a grid of y and x coordinates for each position in the feature map as the reference points
-            ref_y, ref_x = ops.meshgrid( ops.linspace(Tensor(0.5), Tensor(H - 0.5), H),
+            ref_y, ref_x = mnp.meshgrid( ops.linspace(Tensor(0.5), Tensor(H - 0.5), H),
                 ops.linspace(Tensor(0.5), Tensor(W - 0.5), W)
             ) 
             # Normalize the coordinates

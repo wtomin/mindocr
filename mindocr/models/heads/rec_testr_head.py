@@ -4,7 +4,10 @@ from mindocr.models.layers import MultiScaleDeformableAttention, DeformableTrans
                                   DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,\
                                   PositionalEncoding1D, PositionalEncoding2D
                                   
-from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
+try :
+    from mindspore.nn.transformer.op_parallel_config import default_dpmp_config
+except:
+    from mindspore.parallel._transformer.op_parallel_config import default_dpmp_config
 import copy
 from typing import Optional, List, Tuple
 import math
@@ -50,8 +53,7 @@ class TESTRHead(nn.Cell):
         self.ctrl_point_coord = _get_clones(self.ctrl_point_coord, num_pred)
         self.text_class = nn.Dense(self.hidden_size, self.voc_size + 1)
 
-    def construct(self, inputs):
-        hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = inputs
+    def construct(self, hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, **kwargs):
         # output
         outputs_classes = []
         outputs_coords = []

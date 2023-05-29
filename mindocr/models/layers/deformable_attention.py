@@ -7,9 +7,9 @@ from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype
 import mindspore.common.initializer as init
 try:
-    from mindspore import _checkparam as validator
+    from mindspore._checkparam import Validator as validator #<=2.0.0a1
 except ImportError:
-    from mindspore._checkparam import Validator as validator
+    from mindspore import _checkparam as validator
 from mindspore import log as logger
 from mindspore.parallel._utils import _get_parallel_mode, _is_sharding_propagation
 from mindspore.context import ParallelMode

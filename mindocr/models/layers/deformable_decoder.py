@@ -7,9 +7,9 @@ import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
 import mindspore.common.dtype as mstype 
 try:
-    from mindspore import _checkparam as validator
+    from mindspore._checkparam import Validator as validator #<=2.0.0a1
 except ImportError:
-    from mindspore._checkparam import Validator as validator
+    from mindspore import _checkparam as validator
 from mindspore.parallel._utils import _get_parallel_mode, _is_sharding_propagation
 from mindspore.context import ParallelMode
 try:
@@ -20,7 +20,8 @@ except ImportError:
     from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
 
 from mindocr.utils.misc import inverse_sigmoid, _get_clones
-from mindspore.nn.layer.transformer import MultiheadAttention # >=mindspore2.0.0rc1
+# from mindspore.nn.layer.transformer import MultiheadAttention # >=mindspore2.0.0rc1
+from mindocr.models.layers.ms_transformer import MultiheadAttention # <=mindspore2.0.0rc1
 class DeformableCompositeTransformerDecoderLayer(nn.Cell):
     @_args_type_validator_check(hidden_size=validator.check_positive_int,
                                 num_heads=validator.check_positive_int,

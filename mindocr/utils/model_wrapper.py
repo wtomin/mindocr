@@ -4,8 +4,7 @@ import mindspore.ops as ops
 from mindspore.communication import get_group_size
 from mindspore.common import dtype as mstype
 from mindspore.ops import functional as F
-from functools import partial
-import logging
+
 
 class NetWithLossWrapper(nn.Cell):
     '''
@@ -17,26 +16,20 @@ class NetWithLossWrapper(nn.Cell):
         input_indices: The indices of the data tuples which will be fed into the network. If it is None, then the first item will be fed only.
         label_indices: The indices of the data tuples which will be fed into the loss function. If it is None, then the remaining items will be fed.
     '''
-    def __init__(self, net, loss_fn, pred_cast_fp32=False, input_indices=None, label_indices=None, inputs_outputs_type=None, column_names = None):
+    def __init__(self, net, loss_fn, pred_cast_fp32=False, column_names = None, input_indices=None, aux_input_indices=None, label_indices=None):
         super().__init__(auto_prefix=False)
         self._net = net
         self._loss_fn = loss_fn
         # TODO: get this automatically from net and loss func
         self.input_indices = input_indices
+        self.aux_input_indices = aux_input_indices
         self.label_indices = label_indices
+        self.column_names = column_names
+        if self.aux_input_indices is not None and len(self.aux_input_indices) > 0:
+            assert self.column_names is not None and len(self.column_names) > 0,\
+                  'column_names must be provided if aux_input_indices is provided'
         self.pred_cast_fp32 = pred_cast_fp32
-        if inputs_outputs_type is None:
-            inputs_outputs_type = 0 # 0: list, 1: dict
-        if inputs_outputs_type ==0 :
-            self.select_inputs_by_indices = select_inputs_by_indices_tuple
-        elif inputs_outputs_type == 1:
-            assert column_names is not None, "column_names should be provided when inputs_outputs_type is 1"
-            self.column_names = column_names
-            self.select_inputs_by_indices = partial(select_inputs_by_indices_dict, column_names=column_names)
-        else:
-            raise ValueError("inputs_outputs_type should be 0 or 1")
-    
-        self.inputs_outputs_type = inputs_outputs_type
+        self.cast = ops.Cast()
 
     def construct(self, *args):
         '''
@@ -48,24 +41,22 @@ class NetWithLossWrapper(nn.Cell):
         if self.input_indices is None:
             pred = self._net(args[0])
         else:
-            pred = self._net(self.select_inputs_by_indices(args, self.input_indices))
+            net_inputs = select_inputs_by_indices_tuple(args, self.input_indices)
+            aux_inputs_to_net = {}
+            if self.aux_input_indices is not None and len(self.aux_input_indices) > 0:
+                aux_inputs_to_net = select_inputs_by_indices_dict(args, self.aux_input_indices, self.column_names)
+            pred = self._net(*net_inputs, **aux_inputs_to_net)
 
         if self.pred_cast_fp32:
-            if isinstance(pred, ms.Tensor):
-                pred = F.cast(pred, mstype.float32)
-            elif isinstance(pred, tuple) or isinstance(pred, list):
-                if self.inputs_outputs_type !=0:
-                    # warning log
-                    logging.warning(f"Network prediction is a tuple (list). Better to return dictionary because inputs_outputs_type is {self.inputs_outputs_type}")
-                pred = [F.cast(p, mstype.float32) for p in pred]
-            elif isinstance(pred, dict):
-                if self.inputs_outputs_type ==0:
-                    logging.warning(f"Network prediction is a dictionary. Better to return tuple (list) because inputs_outputs_type is {self.inputs_outputs_type}")
-                pred = {k: F.cast(v, mstype.float32) for k, v in pred.items()}
+            if isinstance(pred, list) or isinstance(pred, tuple):
+                pred = [self.cast(p, mstype.float32) for p in pred]
+            else:
+                pred = self.cast(pred, mstype.float32)
+
         if self.label_indices is None:
-            loss_val = self._loss_fn(pred, args[1:])
+            loss_val = self._loss_fn(pred, *args[1:])
         else:
-            loss_val = self._loss_fn(pred, self.select_inputs_by_indices(args, self.label_indices))
+            loss_val = self._loss_fn(pred, *select_inputs_by_indices_tuple(args, self.label_indices))
 
         return loss_val
 
@@ -81,23 +72,14 @@ class NetWithEvalWrapper(nn.Cell):
         input_indices: The indices of the data tuples which will be fed into the network. If it is None, then the first item will be fed only.
         label_indices: The indices of the data tuples which will be fed into the loss function. If it is None, then the remaining items will be fed.
     '''
-    def __init__(self, net, loss_fn=None, input_indices=None, label_indices=None, inputs_outputs_type=None, column_names = None):
+    def __init__(self, net, loss_fn=None, input_indices=None, label_indices=None):
         super().__init__(auto_prefix=False)
         self._net = net
         self._loss_fn = loss_fn
         # TODO: get this automatically from net and loss func
         self.input_indices = input_indices
         self.label_indices = label_indices
-        if inputs_outputs_type is None:
-            inputs_outputs_type = 0 # 0: list, 1: dict
-        if inputs_outputs_type ==0 :
-            self.select_inputs_by_indices = select_inputs_by_indices_tuple
-        elif inputs_outputs_type == 1:
-            assert column_names is not None, "column_names should be provided when inputs_outputs_type is 1"
-            self.column_names = column_names
-            self.select_inputs_by_indices = partial(select_inputs_by_indices_dict, column_names=column_names)
-        else:
-            raise ValueError("inputs_outputs_type should be 0 or 1")
+
     def construct(self, *args):
         '''
         Args:
@@ -109,15 +91,15 @@ class NetWithEvalWrapper(nn.Cell):
         if self.input_indices is None:
             pred = self._net(args[0])
         else:
-            pred = self._net(self.select_inputs_by_indices(args, self.input_indices))
+            pred = self._net(*select_inputs_by_indices_tuple(args, self.input_indices))
 
         if self.label_indices is None:
             labels = args[1:]
         else:
-            labels = self.select_inputs_by_indices(args, self.label_indices)
+            labels = select_inputs_by_indices_tuple(args, self.label_indices)
 
         if self._loss_fn is not None:
-            loss_val = self._loss_fn(pred, labels)
+            loss_val = self._loss_fn(pred, *labels)
         else:
             loss_val = None
 
@@ -128,8 +110,9 @@ def select_inputs_by_indices_tuple(inputs, indices):
     for x in indices:
         new_inputs.append(inputs[x])
     return new_inputs
+
 def select_inputs_by_indices_dict(inputs, indices, column_names):
     new_inputs = dict()
-    for x in indices:
-        new_inputs[column_names[x]] = inputs[x]
+    for k, i in zip(column_names, indices):
+        new_inputs[k] = inputs[i]
     return new_inputs
