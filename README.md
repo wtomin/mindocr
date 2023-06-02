@@ -53,7 +53,7 @@ For distributed training, please install [openmpi 4.0.3](https://www.open-mpi.or
 | Python      | >=3.7   |
 
 > Notes: 
-> - If you [use MX Engine for Inference](#21-inference-with-mx-engine), the version of Python should be 3.9.
+> - If you [use ACL for Inference](#21-inference-with-mindspore-lite-and-acl), the version of Python should be 3.9.
 > - If scikit_image cannot be imported, you can use the following command line to set environment variable `$LD_PRELOAD` referring to [here](https://github.com/opencv/opencv/issues/14884). Change `path/to` to your directory.
 >   ```shell
 >   export LD_PRELOAD=path/to/scikit_image.libs/libgomp-d22c30c5.so.1.0.0:$LD_PRELOAD
@@ -81,56 +81,58 @@ pip install git+https://github.com/mindspore-lab/mindocr.git
 
 We will take **DBNet** model and **ICDAR2015** dataset as an example to illustrate how to configure the training process with a few lines of modification on the yaml file.
 
-Please refer to [DBNet readme](configs/det/dbnet/README.md#3-quick-start) for detailed instructions.
+Please refer to [DBNet Readme](configs/det/dbnet/README.md#3-quick-start) for detailed instructions.
 
 
 #### 1.2 Text Recognition 
 
 We will take **CRNN** model and **LMDB** dataset as an illustration on how to configure and launch the training process easily. 
 
-Detailed instructions can be viewed in [CRNN readme](configs/rec/crnn/README.md#3-quick-start).
+Detailed instructions can be viewed in [CRNN Readme](configs/rec/crnn/README.md#3-quick-start).
 
 **Note:**
 The training pipeline is fully extendable. To train other text detection/recognition models on a new dataset, please configure the model architecture (backbone, neck, head) and data pipeline in the yaml file and launch the training script with `python tools/train.py -c /path/to/yaml_config`.
 
 ### 2. Inference and Deployment
 
-#### 2.1 Inference with MX Engine
+#### 2.1 Inference with MindSpore Lite and ACL on Ascend 310 
 
-MX, which is short for [MindX](https://www.hiascend.com/zh/software/mindx-sdk), allows efficient model inference and deployment on Ascend devices. 
+MindOCR supports OCR model inference with [MindSpore Lite](https://www.mindspore.cn/lite/en) and [ACL](https://www.hiascend.com/document/detail/zh/canncommercial/63RC1/inferapplicationdev/aclcppdevg/aclcppdevg_000004.html) (Ascend Computation Language)  backends. It integrates efficient text detection, classification and recognition inference pipeline for deployment. 
 
-MindOCR supports OCR model inference with MX Engine. Please refer to [mx_infer](docs/cn/inference_tutorial_cn.md) for detailed illustrations.
+Please refer to [MindOCR Inference on Ascend 310](docs/en/inference/inference_tutorial_en.md) for detailed illustrations.
 
-#### 2.2 Inference with MindSpore Lite 
+#### 2.2 Inference with native MindSpore on Ascend910/GPU/CPU
 
-Coming soon
+MindOCR provides easy-to-use text detection and recognition inference tools supporting CPU/GPU/Ascend910 devices, based on the MindOCR-trained models. 
 
-#### 2.3 Inference with native MindSpore
+Please refer to [MindOCR Online Inference](tools/infer/text/README.md) for details.
 
-MindOCR provides the detection and recognition prediction pipeline using MindOCR-trained ckpt files. Please check [here](docs/en/predict_ckpt.md).
 
 ## Model List
 
 <details open>
 <summary>Text Detection</summary>
 
-- [x] [DBNet](https://arxiv.org/abs/1911.08947) (AAAI'2020) 
-- [x] [DBNet++](https://arxiv.org/abs/2202.10304) (TPAMI'2022)
-- [ ] [FCENet](https://arxiv.org/abs/2104.10442) (CVPR'2021) [dev]
+- [x] [DBNet](configs/det/dbnet/README.md) (AAAI'2020) 
+- [x] [DBNet++](configs/det/dbnet/README.md) (TPAMI'2022)
+- [x] [PSENet](configs/det/psenet/README.md) (CVPR'2019)
+- [x] [EAST](configs/det/east/README.md)(CVPR'2017)
+- [ ] [FCENet](https://arxiv.org/abs/2104.10442) (CVPR'2021) [coming soon]
 
 </details>
 
 <details open>
 <summary>Text Recognition</summary>
 
-- [x] [CRNN](https://arxiv.org/abs/1507.05717) (TPAMI'2016)
-- [ ] [ABINet](https://arxiv.org/abs/2103.06495) (CVPR'2021) [dev]
-- [ ] [SVTR](https://arxiv.org/abs/2205.00159) (IJCAI'2022) [infer only]
+- [x] [CRNN](configs/rec/crnn/README.md) (TPAMI'2016)
+- [x] [CRNN-Seq2Seq/RARE](configs/rec/rare/README.md) (CVPR'2016)
+- [x] [SVTR](configs/rec/svtr/README.md) (IJCAI'2022) 
+- [ ] [ABINet](https://arxiv.org/abs/2103.06495) (CVPR'2021) [coming soon]
 
 
 For the detailed performance of the trained models, please refer to [configs](./configs).
 
-For detailed inference performance using MX engine, please refer to [mx inference performance](docs/cn/inference_models_cn.md) 
+For detailed support for MindSpore Lite and ACL inference models, please refer to [MindOCR Models Support List](docs/en/inference/models_list_en.md) and [Third-Party Models Support List](docs/en/inference/models_list_thirdparty_en.md).
 
 ## Datasets
 
@@ -162,6 +164,18 @@ After downloading these datasets in the `DATASETS_DIR` folder, you can run `bash
 ## Notes
 
 ### Change Log
+- 2023/05/15
+1. Add new trained models
+    - [DBNet++](configs/det/dbnet) for text detection
+    - [CRNN-Seq2Seq](configs/rec/rare) for text recognition
+    - DBNet pretrained on SynthText is now available: [checkpoint url](https://download.mindspore.cn/toolkits/mindocr/dbnet/dbnet_resnet50_synthtext-40655acb.ckpt)
+2. Add more benchmark datasets and their results 
+    - [SynthText](https://academictorrents.com/details/2dba9518166cbd141534cbf381aa3e99a087e83c), [MSRA-TD500](docs/en/datasets/td500.md), [CTW1500](docs/en/datasets/ctw1500.md) 
+    - More benchmark results for DBNet are reported [here](configs/det/dbnet/README.md).
+3. Add checkpoint manager for saving top-k checkpoints and improve log.
+4. Python inference code refractored. 
+5. Bug fix: use meter to average loss for large datasets, disable `pred_cast_fp32` for ctcloss in AMP training, fix error when invalid polygons exist.
+
 - 2023/05/04
 1. Support loading self-defined pretrained checkpoints via setting `model-pretrained` with checkpoint url or local path in yaml. 
 2. Support setting probability for executing augmentation including rotation and flip.
@@ -205,7 +219,7 @@ Please refer to [CONTRIBUTING.md](CONTRIBUTING.md) for the contributing guidelin
 
 ### License
 
-This project follows the [Apache License 2.0](LICENSE.md) open-source license.
+This project follows the [Apache License 2.0](LICENSE) open-source license.
 
 ### Citation
 

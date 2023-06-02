@@ -1,17 +1,30 @@
-'''
-The online ckpt files are downloaded from https://download.mindspore.cn/toolkits/mindocr/
-Usage:
-    To export all trained models from online ckpt to mindir as listed in configs/, run
-       $ python tools/export.py
+"""
+Export ckpt files to mindir files for inference.
 
-    To export a specific model by downloading online ckpt, taking dbnet_resnet50 for example, run
-       $ python tools/export.py --model_name dbnet_resnet50
+Args:
+    model_name (str): Name of the model to be converted, or the path to the model YAML config file
+    data_shape (int): The data shape [H, W] for exporting mindir files.
+    local_ckpt_path (str): Path to a local checkpoint. If set, export mindir by loading local ckpt. Otherwise, export mindir by downloading online ckpt.
+    save_dir (str): Directory to save the exported mindir file.
 
-    To export a specific model by loading local ckpt, taking dbnet_resnet50 for example, run
-       $ python tools/export.py --model_name dbnet_resnet50 --local_ckpt_path /path/to/local_ckpt
-'''
+Example:
+    >>> # Export mindir of model `dbnet_resnet50` by downloading online ckpt
+    >>> python tools/export.py --model_name dbnet_resnet50 --data_shape 736 1280
+    >>> # Export mindir of model `dbnet_resnet50` by loading local ckpt
+    >>> python tools/export.py --model_name dbnet_resnet50 --data_shape 736 1280 --local_ckpt_path /path/to/local_ckpt
+    >>> # Export mindir of model whose architecture is defined by crnn_resnet34.yaml with local checkpoint
+    >>> python tools/export.py --model_name configs/rec/crnn/crnn_resnet34.yaml --local_ckpt_path ~/.mindspore/models/crnn_resnet34-83f37f07.ckpt --data_shape 32 100
+
+Notes:
+    - Args `model_name` and `data_shape` are required to be specified when running export.py.
+    - The `data_shape` is recommended to be the same as the rescaled data shape in evaluation to get the best inference performance.
+    - The online ckpt files are downloaded from https://download.mindspore.cn/toolkits/mindocr/.
+"""
+
 import sys
 import os
+import yaml
+
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.abspath(os.path.join(__dir__, "..")))
 
@@ -21,50 +34,41 @@ from mindocr import list_models, build_model
 import numpy as np
 
 
-def export(name, task='rec', local_ckpt_path="", save_dir=""):
+def export(name_or_config, data_shape, local_ckpt_path="", save_dir=""):
     ms.set_context(mode=ms.GRAPH_MODE) #, device_target='Ascend')
-    if local_ckpt_path:
-        net = build_model(name, pretrained=False, ckpt_load_path=local_ckpt_path)
+
+    if name_or_config.endswith('.yml') or name_or_config.endswith('.yaml'):
+        with open(name_or_config, "r") as f:
+            model_cfg = yaml.safe_load(f)['model']
+        name = os.path.basename(name_or_config).split('.')[0]
+        assert local_ckpt_path, 'Checkpoint path must be specified if using YAML config file to define model architecture. Please set checkpoint path via `--local_ckpt_path`.'
     else:
-        net = build_model(name, pretrained=True)
+        model_cfg = name_or_config
+        name = name_or_config
+
+    if local_ckpt_path:
+        net = build_model(model_cfg, pretrained=False, ckpt_load_path=local_ckpt_path)
+    else:
+        net = build_model(model_cfg, pretrained=True)
+
     net.set_train(False)
 
-    # TODO: extend input shapes for more models
-    if task=='rec':
-        c, h, w = 3, 32, 100
-    else:
-        c, h, w = 3, 736, 1280
-
-    bs = 1
+    h, w = data_shape
+    bs, c = 1, 3
     x = ms.Tensor(np.ones([bs, c, h, w]), dtype=ms.float32)
 
     output_path = os.path.join(save_dir, name) + '.mindir'
     ms.export(net, x, file_name=output_path, file_format='MINDIR')
 
-    print(f'=> Finish exporting {name} to {output_path}')
+    print(f'=> Finish exporting {name} to {os.path.realpath(output_path)}. The data shape [H, W] is {data_shape}')
 
-
-def str2bool(v):
-    if isinstance(v, bool):
-        return v
-    if v.lower() in ("yes", "true", "1"):
-        return True
-    elif v.lower() in ("no", "false", "0"):
-        return False
-    else:
-        raise argparse.ArgumentTypeError("Boolean value expected.")
 
 def check_args(args):
-    if args.local_ckpt_path:  # load local ckpt
-        if not args.model_name:
-            raise ValueError("Arg 'model_name' is empty. Please set 'model_name' if 'local_ckpt_path' is not None.")
-        if args.model_name not in list_models():
-            raise ValueError(f"Invalid 'model_name': {args.model_name}. 'model_name' must be one of names in {list_models()}.")
-        if not os.path.isfile(args.local_ckpt_path):
-            raise ValueError(f"No such ckpt file in this path: {args.local_ckpt_path}.")
-    else:  # download online ckpt
-        if args.model_name and args.model_name not in list_models():
-            raise ValueError(f"Invalid 'model_name': {args.model_name}. 'model_name' must be empty or one of names in {list_models()}.")
+    if args.local_ckpt_path and not os.path.isfile(args.local_ckpt_path):
+        raise ValueError(f"Local ckpt file {args.local_ckpt_path} does not exist. Please check arg 'local_ckpt_path'.")
+    if args.save_dir:
+        os.makedirs(args.save_dir, exist_ok=True)
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser("Convert model checkpoint to mindir format.")
@@ -72,28 +76,28 @@ if __name__ == '__main__':
         '--model_name',
         type=str,
         default="",
-        help='Name of the model to convert, choices: [crnn_resnet34, crnn_vgg7, dbnet_resnet50, ""]. You can lookup the name by calling mindocr.list_models(). If "", all models in list_models() will be converted.')
+        required=True,
+        #choices=list_models(),
+        help=f'Name of the model to be converted or the path to model YAML config file. Available choices for names: {list_models()}.')
+    parser.add_argument(
+        '--data_shape',
+        type=int,
+        nargs=2,
+        default="",
+        required=True,
+        help=f'The data shape [H, W] for exporting mindir files. It is recommended to be the same as the rescaled data shape in evaluation to get the best inference performance.')
     parser.add_argument(
         '--local_ckpt_path',
         type=str,
         default="",
-        help='Path to a local checkpoint. If set, export a specific model by loading local ckpt. Otherwise, export all models or a specific model by downloading online ckpt.')
+        help='Path to a local checkpoint. If set, export mindir by loading local ckpt. Otherwise, export mindir by downloading online ckpt.')
     parser.add_argument(
         '--save_dir',
         type=str,
         default="",
-        help='Dir to save the exported model')
+        help='Directory to save the exported mindir file.')
 
     args = parser.parse_args()
     check_args(args)
 
-    if args.model_name == "":
-        model_names = list_models()
-    else:
-        model_names = [args.model_name]
-
-    for n in model_names:
-        task = 'rec'
-        if 'db' in n or 'east' in n:
-            task = 'det'
-        export(n, task, args.local_ckpt_path, args.save_dir)
+    export(args.model_name, args.data_shape, args.local_ckpt_path, args.save_dir)
