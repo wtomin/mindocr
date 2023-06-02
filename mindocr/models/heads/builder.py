@@ -4,11 +4,10 @@ from .det_east_head import EASTHead
 from .det_pse_head import PSEHead
 from .rec_ctc_head import CTCHead
 from .rec_attn_head import AttentionHead
-
+from .rec_visionlan_head import VisionLANHead
 
 __all__ = ['build_head']
-supported_heads = ['ConvHead', 'DBHead', 'EASTHead', 'CTCHead', 'PSEHead', 'AttentionHead']
-
+supported_heads = ['ConvHead', 'DBHead', 'EASTHead', 'CTCHead', 'PSEHead', 'AttentionHead', 'VisionLANHead']
 
 def build_head(head_name, **kwargs):
     """
