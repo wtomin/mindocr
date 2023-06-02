@@ -1,0 +1,159 @@
+system:
+  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
+  distribute: False
+  amp_level: 'O0'
+  seed: 42
+  log_interval: 100
+  val_while_train: False
+  drop_overflow_update: False
+  
+common:
+  character_dict_path: &character_dict_path  mindocr/utils/dict/en_dict.txt
+  num_classes: &num_classes 37 # num_chars_in_dict+1,  TODO: retreive it from dict or check correctness
+  max_text_len: &max_text_len 25
+  infer_mode: &infer_mode False
+  use_space_char: &use_space_char False
+  batch_size: &batch_size 64
+
+model:
+  type: rec
+  transform: null
+  backbone:
+    name: rec_resnet45
+    pretrained: False
+    strides: [2, 2, 2, 1, 1]
+
+  head:
+    name: VisionLAN_Head 
+    n_layers: 3
+    n_positions: 256
+    n_dim: 512
+    max_text_length:  *max_text_length
+    training_step: &training_step LA
+
+
+postprocess:
+  name: VisionLANPostProcess
+  character_dict_path: *character_dict_path
+  use_space_char: *use_space_char
+  
+metric:
+  name: RecMetric
+  main_indicator: acc
+  character_dict_path: *character_dict_path
+  ignore_space: True
+  print_flag: False
+
+loss:
+  name: VisionLANLoss 
+  mode: *training_step
+  weight_res: 0.5
+  weight_mas: 0.5
+
+scheduler: 
+  scheduler: warmup_cosine_decay
+  min_lr: 0.0
+  lr: 0.0001
+  num_epochs: 60
+  warmup_epochs: 6
+  decay_epochs: 54
+
+optimizer:
+  opt: adamw
+  filter_bias_and_bn: True
+  momentum: 0.95
+  weight_decay: 0.0001
+  nesterov: False
+  #use_nesterov: True 
+
+loss_scaler:
+  type: static
+  loss_scale: 512
+
+train:
+  ema: True
+  ema_decay: 0.9999
+  ckpt_save_dir: './tmp_rec'
+  dataset_sink_mode: False
+  pred_cast_fp32: False
+  dataset:
+    type: LMDBDataset
+    dataset_root: ../data_lmdb_release # Optional, if set, dataset_root will be used as a prefix for data_dir
+    data_dir: training/
+    # label_file: # not required when using LMDBDataset
+    sample_ratio: 1.0
+    shuffle: True
+    transform_pipeline:
+      - DecodeImage: 
+          img_mode: BGR
+          to_float32: False
+      - VisionLANLabelEncode:
+          max_text_len: *max_text_len 
+          character_dict_path: *character_dict_path
+          use_space_char: *use_space_char
+          lower: False
+      - SVTRRecAug:
+          aug_type: 0
+      - SVTRRecResizeImg:
+          image_shape: [64, 256] # H, W
+          padding: False
+      - NormalizeImage:  # different from paddle (paddle wrongly normalize BGR image with RGB mean/std from ImageNet for det, and simple rescale to [-1, 1] in rec. 
+          bgr_to_rgb: True
+          is_hwc: True
+          mean : [127.0, 127.0, 127.0] 
+          std : [127.0, 127.0, 127.0]
+      - ToCHWImage: 
+    #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
+    output_columns: ['image', 'label', 'label_res', 'label_sub', 'label_id', 'length']
+    net_input_column_index: [0] # input indices for network forward func in output_columns
+    label_column_index: [1] # input indices marked as label
+      
+  loader:
+      shuffle: True # TODO: tbc
+      batch_size: *batch_size
+      drop_remainder: True
+      max_rowsize: 12
+      num_workers: 8
+
+eval:
+  ckpt_load_path: ./tmp_visionlan/best.ckpt
+  dataset_sink_mode: False
+  dataset:
+    type: LMDBDataset
+    dataset_root: path/to/chinese_text_recognition/
+    data_dir: validation/
+    # label_file: # not required when using LMDBDataset
+    sample_ratio: 1.0
+    shuffle: False 
+    transform_pipeline:
+      - DecodeImage: 
+          img_mode: BGR
+          to_float32: False
+      - RecCTCLabelEncode:
+          max_text_len: *max_text_len 
+          character_dict_path: *character_dict_path
+          use_space_char: *use_space_char
+          lower: False
+      - RecResizeImg: # different from paddle (paddle converts image from HWC to CHW and rescale to [-1, 1] after resize. 
+          image_shape: [32, 100] # H, W
+          infer_mode: *infer_mode
+          character_dict_path: *character_dict_path
+          padding: False # aspect ratio will be preserved if true.
+      - NormalizeImage:  # different from paddle (paddle wrongly normalize BGR image with RGB mean/std from ImageNet for det, and simple rescale to [-1, 1] in rec. 
+          bgr_to_rgb: True
+          is_hwc: True
+          mean : [127.0, 127.0, 127.0] 
+          std : [127.0, 127.0, 127.0]
+      - ToCHWImage: 
+    #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
+    output_columns: ['image', 'label', 'label_res', 'label_sub', 'label_id', 'length']
+    net_input_column_index: [0] # input indices for network forward func in output_columns
+    label_column_index: [1, 2] # input indices marked as label
+      
+  loader:
+      shuffle: False # TODO: tbc
+      batch_size: 64
+      drop_remainder: False
+      max_rowsize: 12
+      num_workers: 8
+  
