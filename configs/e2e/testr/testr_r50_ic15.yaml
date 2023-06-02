@@ -1,9 +1,9 @@
 system:
-  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
+  mode: 0 # 0 for graph mode, 1 for pynative mode in MindSpore
   distribute: False
   amp_level: 'O0'
   seed: 42
-  log_interval: 10
+  log_interval: 2
   val_while_train: False
   drop_overflow_update: False
 
@@ -43,7 +43,6 @@ model:
     aux_loss: True
     voc_size: 96
     hidden_size: 256
-  inputs_outputs_type: 1 # 0 for list, 1 for dict
 
 postprocess:
   name: DBPostprocess
@@ -131,6 +130,7 @@ train:
     output_columns: ['image', 'image_mask', 'image_size', 'polys', 'boxes', 'rec_ids', 'ignore_tags', 'gt_classes']
     #output_keys: ['image'] # for debug op performance
     net_input_column_index: [0, 1, 2] # num inputs for network forward func in output_keys
+    net_aux_input_column_index: []
     label_column_index: [ 2, 3, 4, 5, 6, 7]
 #    keys_for_loss: 4 # num labels for loss func
 
