@@ -93,7 +93,7 @@ class RecResNet(nn.Cell):
     def __init__(self, in_channels=3, layers=34, **kwargs):
         super(RecResNet, self).__init__()
 
-        self.out_channels = 512
+        self.out_channels = [512]
         self.layers = layers
         supported_layers = [34]
         assert layers in supported_layers, "only support {} layers but input layer is {}".format(

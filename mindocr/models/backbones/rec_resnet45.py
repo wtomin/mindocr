@@ -4,7 +4,7 @@ import mindspore.common.initializer as init
 from mindspore import Tensor, nn
 from ._registry import register_backbone, register_backbone_class
 
-__all__ = ['ResNet45', 'resnet45']
+__all__ = ['RecResNet45', 'rec_resnet45']
 
 class BasicBlock(nn.Cell):
     """define the basic block of resnet"""
@@ -111,7 +111,7 @@ class Bottleneck(nn.Cell):
         return out
 
 @register_backbone_class
-class ResNet45(nn.Cell):
+class RecResNet45(nn.Cell):
     r"""ResNet45 model class, based on
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/abs/1512.03385>`_
 
@@ -144,18 +144,18 @@ class ResNet45(nn.Cell):
         self.input_channels = 32
         self.groups = groups
         self.base_with = base_width
+        self.out_channels = [512]
 
-        self.conv1 = nn.Conv2d(in_channels, self.input_channels, kernel_size=7,
-                               stride=2, pad_mode="pad", padding=3)
+        self.conv1 = nn.Conv2d(in_channels, self.input_channels, kernel_size=3,
+                               stride=1, pad_mode="same")
         self.bn1 = norm(self.input_channels)
         self.relu = nn.ReLU()
-        self.max_pool = nn.MaxPool2d(kernel_size=3, stride=2, pad_mode="same")
+        
         self.layer1 = self._make_layer(block, 32, layers[0], stride = strides[0])
         self.layer2 = self._make_layer(block, 64, layers[1], stride = strides[1])
         self.layer3 = self._make_layer(block, 128, layers[2], stride = strides[2])
         self.layer4 = self._make_layer(block, 256, layers[3], stride = strides[3])
         self.layer5 = self._make_layer(block, 512, layers[4], stride = strides[4])
-        self.out_channels = 512
 
         self._initialize_weights()
 
@@ -227,7 +227,6 @@ class ResNet45(nn.Cell):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.max_pool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -238,15 +237,15 @@ class ResNet45(nn.Cell):
 
     def construct(self, x: Tensor) -> Tensor:
         x = self.forward_features(x)
-
-        return x
+        # maxpooling?
+        return [x]
 
 
 @register_backbone
-def resnet45(pretrained: bool = False, strides: List = [2, 2, 2, 1, 1], in_channels=3, **kwargs):
+def rec_resnet45(pretrained: bool = False, strides: List = [2, 2, 2, 1, 1], in_channels=3, **kwargs):
     """Get 45 layers ResNet model.
     """
-    model = ResNet45(BasicBlock, layers = [3, 4, 6, 6, 3], strides = strides, in_channels=in_channels, **kwargs)
+    model = RecResNet45(BasicBlock, layers = [3, 4, 6, 6, 3], strides = strides, in_channels=in_channels, **kwargs)
 
     if pretrained is True:
         raise NotImplementedError("The default pretrained checkpoint for `rec_resnet34` backbone does not exist.")

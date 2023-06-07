@@ -1,5 +1,6 @@
 from addict import Dict
 from mindspore import nn
+import mindspore as ms
 from .transforms import build_trans
 from .backbones import build_backbone
 from .necks import build_neck
@@ -45,7 +46,14 @@ class BaseModel(nn.Cell):
 
         self.model_name = f'{backbone_name}_{neck_name}_{head_name}'
 
-    def construct(self, x, y=None):
+        #load state dict if provided
+        if config.state_dict.init_ckpt is not None:
+            ckpt_path = config.state_dict.init_ckpt
+            assert os.path.exists(ckpt_path), f"{ckpt_path} does not exist!"
+            ms.load_checkpoint(ckpt_path, self, config.state_dict.get('strict_load', False))
+            print(f"{self.model_name} load checkpoint state dict from {ckpt_path}.")
+
+    def construct(self, x, aux_input=None):
         if self.transform is not None:
             x = self.transform(x)
 
@@ -54,8 +62,8 @@ class BaseModel(nn.Cell):
 
         nout = self.neck(bout)
 
-        if y is not None:
-            hout = self.head(nout, y)
+        if aux_input is not None:
+            hout = self.head(nout, aux_input)
         else:
             hout = self.head(nout)
 

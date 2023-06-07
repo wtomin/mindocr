@@ -16,12 +16,13 @@ class NetWithLossWrapper(nn.Cell):
         input_indices: The indices of the data tuples which will be fed into the network. If it is None, then the first item will be fed only.
         label_indices: The indices of the data tuples which will be fed into the loss function. If it is None, then the remaining items will be fed.
     '''
-    def __init__(self, net, loss_fn, pred_cast_fp32=False, input_indices=None, label_indices=None):
+    def __init__(self, net, loss_fn, pred_cast_fp32=False, input_indices=None, aux_input_indices=None, label_indices=None):
         super().__init__(auto_prefix=False)
         self._net = net
         self._loss_fn = loss_fn
         # TODO: get this automatically from net and loss func
         self.input_indices = input_indices
+        self.aux_input_indices = aux_input_indices
         self.label_indices = label_indices
         self.pred_cast_fp32 = pred_cast_fp32
         self.cast = ops.Cast()
@@ -36,14 +37,15 @@ class NetWithLossWrapper(nn.Cell):
         if self.input_indices is None:
             pred = self._net(args[0])
         else:
-            pred = self._net(*select_inputs_by_indices(args, self.input_indices))
+            aux_input = select_inputs_by_indices(args, self.aux_input_indices) if self.aux_input_indices is not None else None
+            pred = self._net(*select_inputs_by_indices(args, self.input_indices), aux_input = aux_input)
 
         if self.pred_cast_fp32:
             if isinstance(pred, list) or isinstance(pred, tuple):
                 pred = [self.cast(p, mstype.float32) for p in pred]
             else:
                 pred = self.cast(pred, mstype.float32)
-
+                
         if self.label_indices is None:
             loss_val = self._loss_fn(pred, *args[1:])
         else:

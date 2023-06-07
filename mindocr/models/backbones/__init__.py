@@ -6,6 +6,7 @@ from .det_mobilenet import *
 from .rec_vgg import *
 from .rec_resnet import *
 from .rec_svtr import *
+from .rec_resnet45 import *
 
 # helpers
 from .builder import * 

@@ -1,7 +1,7 @@
 import os
 import time
 from tqdm import tqdm
-from typing import List
+from typing import List, Tuple
 from packaging import version
 
 import mindspore as ms
@@ -139,17 +139,28 @@ class EvalSaveCallback(Callback):
 
         if not data_sink_mode and cur_step_in_epoch % self.log_interval == 0:
             opt = cb_params.train_network.optimizer
-            learning_rate = opt.learning_rate
-            cur_lr = learning_rate(opt.global_step - 1).asnumpy().squeeze()
+            cur_lr = opt.get_lr() # lr or group lr
+            cur_lr = cur_lr.asnumpy().squeeze() if not isinstance(cur_lr, (Tuple, List)) else [lr.asnumpy().squeeze() for lr in cur_lr]
+            cur_lr = float(cur_lr) if not isinstance(cur_lr, (Tuple, List)) else [float(lr) for lr in cur_lr]
             per_step_time = (
                 (time.time() - self.step_start_time) * 1000 / self.log_interval
             )
             fps = self.batch_size * 1000 / per_step_time
             loss = self._loss_avg_meter.val.asnumpy()
-            msg = (
-                f"epoch: [{cur_epoch}/{cb_params.epoch_num}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
-                f"loss: {loss:.6f}, lr: {cur_lr:.6f}, per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
-            )
+            if not isinstance(cur_lr, List):
+                msg = (
+                    f"epoch: [{cur_epoch}/{cb_params.epoch_num}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
+                    f"loss: {loss:.6f}, lr: {cur_lr:.6f}, per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
+                )
+            else:
+                msg = (
+                    f"epoch: [{cur_epoch}/{cb_params.epoch_num}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
+                    f"loss: {loss:.6f},"
+                )
+                cur_lr = set(cur_lr)
+                for i_lr, lr in enumerate(cur_lr):
+                    msg+=f"  lr_{i_lr}: {lr:.6f},"
+                msg +=f" per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
             self.logger(msg)
             self.step_start_time = time.time()
 

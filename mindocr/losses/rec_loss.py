@@ -6,6 +6,7 @@ from mindspore import Tensor, Parameter
 from mindspore.common import dtype as mstype
 from mindspore import ops
 import numpy as np
+from typing import List, Tuple
 
 __all__ = ['CTCLoss', 'VisionLANLoss']
 
@@ -59,47 +60,44 @@ class CTCLoss(LossBase):
         return loss
 
 class VisionLANLoss(LossBase):
-    def __init__(self, mode='LF_1', weight_res = 0.5, weight_mas = 0.5, reduction='mean', **kwargs):
+    def __init__(self, mode='LF_1', weight_res = 0.5, weight_mas = 0.5,  reduction='mean', **kwargs):
         super().__init__()
-        self.criterion = nn.CrossEntropyLoss(reduction=reduction)
+        self.criterion = nn.CrossEntropyLoss(reduction=reduction, ignore_index=-100) # ignore the samples in the target padded with -100
         assert mode in ['LF_1', 'LF_2', 'LA']
         self.mode = mode
         self.weight_res = weight_res
         self.weight_mas = weight_mas
 
-    def flatten_label(self, target):
-        label_flatten = []
-        label_length = []
+    def replace_label_with_pad_value(self, target, pad_value = -100):
+        nonzero_mask = (target !=0 )
         for i in range(0, target.shape[0]):
-            cur_label = target[i].tolist()
-            label_flatten += cur_label[:cur_label.index(0) + 1]
-            label_length.append(cur_label.index(0) + 1)
-        label_flatten = Tensor(label_flatten, ms.int64)
-        label_length = Tensor(label_length, ms.int32)
-        return (label_flatten, label_length)
-
-    def _flatten(self, sources, lengths):
-        return ops.concat([t[:l] for t, l in zip(sources, lengths)])
-
-    def constrcut(self, predicts, batch):
+            cur_label = target[i]
+            L = cur_label.shape[0]
+            index = (cur_label==0).nonzero().squeeze()[0] 
+            nonzero_mask[i, index] = True
+        target[~nonzero_mask] = pad_value
+        return target
+        
+    def construct(self, predicts, label, label_res, label_sub):
+        # predicts: ()
         text_pre = predicts[0]
-        target = batch[1].astype('int64')
-        label_flatten, length = self.flatten_label(target)
-        text_pre = self._flatten(text_pre, length)
-        if self.mode == 'LF_1':
-            loss = self.criterion(text_pre, label_flatten)
-        else:
+        b, l, c = text_pre.shape
+        target = ops.cast(label, ms.int32) # target text indexes
+        target = self.replace_label_with_pad_value(target)
+        if self.mode == 'LF_1': # train the backbone, sequence model, and prediction layer
+            loss = self.criterion(text_pre.view(b*l, c), target.view(b*l, )) #Dynamic shape problem: change text_pre and label_flatten to fixed shapes, and use ignore index
+        else:                   # train the backbone, sequence model, and prediction layer with masking
             text_rem = predicts[1]
+            b1, l1, c1 = text_rem.shape
             text_mas = predicts[2]
-            target_res = batch[2].astype('int64')
-            target_sub = batch[3].astype('int64')
-            label_flatten_res, length_res = self.flatten_label(target_res)
-            label_flatten_sub, length_sub = self.flatten_label(target_sub)
-            text_rem = self._flatten(text_rem, length_res)
-            text_mas = self._flatten(text_mas, length_sub)
-            loss_ori = self.criterion(text_pre, label_flatten)
-            loss_res = self.criterion(text_rem, label_flatten_res)
-            loss_mas = self.criterion(text_mas, label_flatten_sub)
+            b2, l2, c2 = text_mas.shape
+            target_res = ops.cast(label_res, ms.int32)
+            target_sub = ops.cast(label_sub, ms.int32)
+            target_res  = self.replace_label_with_pad_value(target_res)
+            target_sub  = self.replace_label_with_pad_value(target_sub)
+            loss_ori = self.criterion(text_pre.view(b*l, c), target.view(b*l, ))
+            loss_res = self.criterion(text_rem.view(b1*l1, c1), target_res.view(b1*l1, ))
+            loss_mas = self.criterion(text_mas.view(b2*l2, c2), target_sub.view(b2*l2, ))
             loss = loss_ori + loss_res * self.weight_res + loss_mas * self.weight_mas
         return loss
     

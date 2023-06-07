@@ -93,6 +93,7 @@ def main(cfg):
         network,
         loss_fn,
         input_indices=cfg.train.dataset.pop("net_input_column_index", None),
+        aux_input_indices=cfg.train.dataset.pop("net_aux_input_column_index", None),
         label_indices=cfg.train.dataset.pop("label_column_index", None),
         pred_cast_fp32=cfg.train.pop("pred_cast_fp32", amp_level != "O0"),
     )  # wrap train-one-step cell

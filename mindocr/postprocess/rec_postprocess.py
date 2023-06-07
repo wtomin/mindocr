@@ -145,14 +145,16 @@ class VisionLANPostProcess(RecCTCLabelDecode):
     """ Convert between text-label and text-index """
 
     def __init__(self, character_dict_path=None, use_space_char=False,
+                blank_at_last=True,
+                lower=False,
                  **kwargs):
-        super(VisionLANPostProcess, self).__init__(character_dict_path, use_space_char)
+        super(VisionLANPostProcess, self).__init__(character_dict_path, use_space_char, blank_at_last, lower)
         self.max_text_length = kwargs.get('max_text_length', 25)
-        self.num_classes = len(self.character) + 1
+        assert blank_at_last == False, "VisionLAN uses blank_at_last =  False, please check your configuration for VisionLANPostProcess"
 
-    def __call__(self, preds, labels=None, length=None, *args, **kwargs):
-        if len(preds) == 2:  # eval mode
-            text_pre, x = preds
+    def __call__(self, preds, labels=None,  length=None, *args, **kwargs):
+        if isinstance(preds, Tensor): # eval mode
+            text_pre = preds.numpy() # (max_len, b, 37)) before the softmax function
             b = text_pre.shape[1]
             lenText = self.max_text_length
             nsteps = self.max_text_length
@@ -161,50 +163,52 @@ class VisionLANPostProcess(RecCTCLabelDecode):
             now_step = 0
             for _ in range(nsteps):
                 if 0 in out_length and now_step < nsteps:
-                    tmp_result = text_pre[now_step, :, :]
+                    tmp_result = text_pre[now_step, :, :] # (b, 37)
                     out_res[now_step] = tmp_result
-                    tmp_result = (-tmp_result).argsort(axis=1)[:, 0] #top1 result index
+                    tmp_result = (-tmp_result).argsort(axis=1)[:, 0] #top1 result index at axis=1, 37 is the dictionary size
                     for j in range(b):
-                        if out_length[j] == 0 and tmp_result[j] == 0:
+                        if out_length[j] == 0 and tmp_result[j] == 0: 
+                            # for the jth sample, if the character with greatest probibility is <PAD>, 
+                            # assign the now_step+1 to  out_length[j] as the prediction length
                             out_length[j] = now_step + 1
                     now_step += 1
             for j in range(0, b):
                 if int(out_length[j]) == 0:
                     out_length[j] = nsteps
             start = 0
-            output = np.zeros((int(out_length.sum()), self.num_classes)).float()
+            output = np.zeros((int(out_length.sum()), self.num_classes))
             for i in range(0, b):
                 cur_length = int(out_length[i])
                 output[start:start + cur_length] = out_res[0:cur_length, i, :]
                 start += cur_length
             net_out = output
             length = out_length
-
         else:  # train mode
             net_out = preds[0]
             length = length
             net_out = ops.concat([t[:l] for t, l in zip(net_out, length)]).numpy()
-        text = []
-
-        net_out = np.exp(net_out)/(net_out.sum(1).unsqueeze(1) + 1e-7)
+        texts = []
+        raw_chars = []
+        confs = []
+        # 1. apply softmax function to net_out
+        net_out = np.exp(net_out)/(np.expand_dims(np.exp(net_out).sum(1),axis=1) + 1e-7) #(N, 37)
         for i in range(0, length.shape[0]):
             start = int(length[:i].sum())
             end = int(length[:i].sum() + length[i])
-            preds_idx_r = (-net_out[start:end]).argsort(1)[:, 0]
-            preds_idx = preds_idx_r[:, 0].tolist()
-            preds_text = ''.join([
-                self.character[idx - 1]
-                if idx > 0 and idx <= len(self.character) else ''
-                for idx in preds_idx
-            ])
-
-            preds_prob = net_out[start:end][:, preds_idx_r][:, 0]
+            preds_idx_r = (-net_out[start:end]).argsort(1)[:, 0] # top1 result index at axis=1
+            preds_idx = preds_idx_r.tolist()
+            pred_chars = [self.character[idx] if idx > 0 and idx <= len(self.character) else '' for idx in preds_idx]
+            preds_text = ''.join(pred_chars)
+            preds_prob = net_out[start:end].max(axis=1) # top1 result at axis=1
             preds_prob = np.exp(np.log(preds_prob).sum() / (preds_prob.shape[0] + 1e-6))
-            text.append((preds_text, preds_prob[0]))
-        if label is None:
-            return text
-        label = self.decode(label)
-        return text, label
+            texts.append(preds_text)
+            raw_chars.append(pred_chars)
+            confs.append(preds_prob)
+
+        if labels is None:
+            return {'texts': texts, 'confs': confs, 'raw_chars': raw_chars}
+        labels = self.decode(labels) # decode to character indexes
+        return texts, labels
 
 class RecAttnLabelDecode:
     def __init__(self, 
