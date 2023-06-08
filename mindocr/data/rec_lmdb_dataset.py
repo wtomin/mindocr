@@ -168,10 +168,12 @@ class LMDBDataset(BaseDataset):
         }
         
         # perform transformation on data
-        data = run_transforms(data, transforms=self.transforms)
-            
-        output_tuple = tuple(data[k] for k in self.output_columns) 
-
+        try:
+            data = run_transforms(data, transforms=self.transforms)
+            output_tuple = tuple(data[k] for k in self.output_columns)
+        except Exception as e:
+            print(f"Error occurred while processing the image id: {idx}\n", e, flush=True)
+            return self[random.randrange(len(self.data_idx_order_list))]  # return another random sample instead
         return output_tuple
 
     def __len__(self):
