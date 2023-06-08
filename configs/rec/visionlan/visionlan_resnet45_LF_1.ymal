@@ -14,7 +14,7 @@ common:
   max_text_len: &max_text_len 25
   infer_mode: &infer_mode False
   use_space_char: &use_space_char False
-  batch_size: &batch_size 128
+  batch_size: &batch_size 192
   blank_at_last: &blank_at_last False # pad blank at the last or the first of the dictionary 
   lower: &lower True
 
