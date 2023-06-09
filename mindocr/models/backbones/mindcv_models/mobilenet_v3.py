@@ -33,7 +33,7 @@ def _cfg(url="", **kwargs):
 
 default_cfgs = {
     "mobilenet_v3_small_1.0": _cfg(
-        url="https://download.mindspore.cn/toolkits/mindcv/mobilenet/mobilenetv3/mobilenetv3_small_100-c884b105.ckpt"
+        url="https://download.mindspore.cn/toolkits/mindcv/mobilenet/mobilenetv3/mobilenet_v3_small_100-c884b105.ckpt"
     ),
     "mobilenet_v3_large_1.0": _cfg(
         url="https://download.mindspore.cn/toolkits/mindcv/mobilenet/mobilenetv3/mobilenet_v3_large_100-6f5bf961.ckpt"
@@ -186,7 +186,8 @@ class MobileNetV3(nn.Cell):
                                        kernel_size=k, stride=s, activation=nl, use_se=se, **bottleneck_params))
             input_channels = output_channels
             total_reduction *= s
-            self.feature_info.append(dict(chs=input_channels, reduction=total_reduction, name=f'features.{len(features) - 1}'))
+            self.feature_info.append(
+                dict(chs=input_channels, reduction=total_reduction, name=f'features.{len(features) - 1}'))
         # Building last point-wise conv layers.
         output_channels = input_channels * 6
         features.extend([
@@ -194,7 +195,8 @@ class MobileNetV3(nn.Cell):
             nn.BatchNorm2d(output_channels),
             nn.HSwish(),
         ])
-        self.feature_info.append(dict(chs=output_channels, reduction=total_reduction, name=f'features.{len(features) - 1}'))
+        self.feature_info.append(
+            dict(chs=output_channels, reduction=total_reduction, name=f'features.{len(features) - 1}'))
         self.flatten_sequential = True
         self.features = nn.CellList(features)
 

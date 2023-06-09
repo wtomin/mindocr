@@ -1,12 +1,16 @@
 # backbones
-from . import builder, _registry
+from . import _registry, builder
+from ._registry import *
 
-from .det_resnet import *
+# helpers
+from .builder import *
+from .cls_mobilenet_v3 import *
 from .det_mobilenet import *
-from .rec_vgg import *
+from .det_resnet import *
 from .rec_resnet import *
 from .rec_svtr import *
 from .rec_resnet45 import *
+from .rec_vgg import *
 
 # helpers
 from .builder import * 

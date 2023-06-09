@@ -1,16 +1,18 @@
+from . import cls_postprocess, det_db_postprocess, det_east_postprocess, det_pse_postprocess, rec_postprocess
+from .cls_postprocess import *
 from .det_db_postprocess import *
-from .det_pse_postprocess import *
 from .det_east_postprocess import *
+from .det_pse_postprocess import *
 from .rec_postprocess import *
-from . import det_db_postprocess
-from . import det_pse_postprocess
-from . import det_east_postprocess
-from . import rec_postprocess
 
 __all__ = ["build_postprocess"]
 
 supported_postprocess = (
-    det_db_postprocess.__all__ + det_pse_postprocess.__all__ + det_east_postprocess.__all__ + rec_postprocess.__all__
+    det_db_postprocess.__all__
+    + det_pse_postprocess.__all__
+    + det_east_postprocess.__all__
+    + rec_postprocess.__all__
+    + cls_postprocess.__all__
 )
 
 
@@ -19,7 +21,8 @@ def build_postprocess(config: dict):
     Create postprocess function.
 
     Args:
-        config (dict): configuration for postprocess including postprocess `name` and also the kwargs specifically for each postprocessor.
+        config (dict): configuration for postprocess including postprocess `name` and also the kwargs specifically
+        for each postprocessor.
             - name (str): metric function name, exactly the same as one of the supported postprocess class names
 
     Return:
@@ -38,8 +41,6 @@ def build_postprocess(config: dict):
     elif proc is None:
         return None
     else:
-        raise ValueError(
-            f"Invalid postprocess name {proc}, support postprocess are {supported_postprocess}"
-        )
+        raise ValueError(f"Invalid postprocess name {proc}, support postprocess are {supported_postprocess}")
 
     return postprocessor
