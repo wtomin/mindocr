@@ -68,22 +68,32 @@ class VisionLANLoss(LossBase):
         self.weight_res = weight_res
         self.weight_mas = weight_mas
 
-    def replace_label_with_pad_value(self, target, pad_value = -100):
-        nonzero_mask = (target !=0 )
-        for i in range(0, target.shape[0]):
-            cur_label = target[i]
-            L = cur_label.shape[0]
-            index = (cur_label==0).nonzero().squeeze()[0] 
-            nonzero_mask[i, index] = True
-        target[~nonzero_mask] = pad_value
+    def replace_label_with_target_value(self, target, label_length, target_value = -100):
+        """ In each row of target, replace the elements (zeros) by the pad value. 
+        Args:
+            target: (Tensor), target text indexes, shape (B, max_len)
+            target_value: (int), the value used to replace the padded label. Default: -100.
+        
+        Returns:
+            target: (Tensor), target text indexes, shape (B, max_len)
+        """
+        b, max_len = target.shape
+        # label_length is the length of valid characters
+        # 1. update the invalid characters except for the first invalid character to the target value
+        # 2. if some samples' lengths equal to max_len, then the tensor would not be updated
+        indices = label_length[:, None] 
+        nonzero_mask = (target != 0)
+        updates = ops.ones(indices.shape, dtype=nonzero_mask.dtype)
+        nonzero_mask = ops.tensor_scatter_elements(nonzero_mask, indices, updates, axis=1)
+        target[~nonzero_mask] = target_value
         return target
         
-    def construct(self, predicts, label, label_res, label_sub):
-        # predicts: ()
+    def construct(self, predicts, label, label_res, label_sub, label_length):
         text_pre = predicts[0]
         b, l, c = text_pre.shape
         target = ops.cast(label, ms.int32) # target text indexes
-        target = self.replace_label_with_pad_value(target)
+        label_length = ops.cast(label_length, ms.int32)
+        target = self.replace_label_with_target_value(target, label_length)
         if self.mode == 'LF_1': # train the backbone, sequence model, and prediction layer
             loss = self.criterion(text_pre.view(b*l, c), target.view(b*l, )) #Dynamic shape problem: change text_pre and label_flatten to fixed shapes, and use ignore index
         else:                   # train the backbone, sequence model, and prediction layer with masking
@@ -93,8 +103,8 @@ class VisionLANLoss(LossBase):
             b2, l2, c2 = text_mas.shape
             target_res = ops.cast(label_res, ms.int32)
             target_sub = ops.cast(label_sub, ms.int32)
-            target_res  = self.replace_label_with_pad_value(target_res)
-            target_sub  = self.replace_label_with_pad_value(target_sub)
+            target_res  = self.replace_label_with_target_value(target_res, label_length - 1) 
+            target_sub  = self.replace_label_with_target_value(target_sub, ops.ones((len(label_length),), dtype=ms.int32))
             loss_ori = self.criterion(text_pre.view(b*l, c), target.view(b*l, ))
             loss_res = self.criterion(text_rem.view(b1*l1, c1), target_res.view(b1*l1, ))
             loss_mas = self.criterion(text_mas.view(b2*l2, c2), target_sub.view(b2*l2, ))
