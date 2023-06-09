@@ -96,7 +96,7 @@ train:
     sample_ratio: 1.0
     shuffle: True
     filter_max_len: True
-    max_text_len: *max_text_lenss
+    max_text_len: *max_text_len
     transform_pipeline:
       - DecodeImage: 
           img_mode: BGR
