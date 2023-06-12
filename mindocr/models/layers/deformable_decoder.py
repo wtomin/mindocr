@@ -20,8 +20,10 @@ except ImportError:
     from mindspore.nn.transformer.op_parallel_config import default_dpmp_config, MoEParallelConfig, OpParallelConfig, _check_config
 
 from mindocr.utils.misc import inverse_sigmoid, _get_clones
-# from mindspore.nn.layer.transformer import MultiheadAttention # >=mindspore2.0.0rc1
-from mindocr.models.layers.ms_transformer import MultiheadAttention # <=mindspore2.0.0rc1
+try:
+    from mindspore.nn.layer.transformer import MultiheadAttention # >=mindspore2.0.0rc1
+except: 
+    from mindocr.models.layers.ms_transformer import MultiheadAttention # <=mindspore2.0.0rc1
 class DeformableCompositeTransformerDecoderLayer(nn.Cell):
     @_args_type_validator_check(hidden_size=validator.check_positive_int,
                                 num_heads=validator.check_positive_int,
@@ -324,7 +326,7 @@ class DeformableCompositeTransformerDecoder(nn.Cell):
         intermediate = []
         intermediate_text = []
         intermediate_reference_points = []
-        for lid, layer in enumerate(self.layers):
+        for layer in self.layers:
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
                                          * ops.concat([src_valid_ratios, src_valid_ratios], -1)[:, None]
@@ -518,7 +520,8 @@ class DeformableTransformerDecoder(nn.Cell):
 
         intermediate = []
         intermediate_reference_points = []
-        for lid, layer in enumerate(self.layers):
+        lid = 0
+        for layer in self.layers:
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
                                          * ops.concat([src_valid_ratios, src_valid_ratios], -1)[:, None]
@@ -543,112 +546,8 @@ class DeformableTransformerDecoder(nn.Cell):
             if self.return_intermediate:
                 intermediate.append(output)
                 intermediate_reference_points.append(reference_points)
+            lid +=1
 
         if self.return_intermediate:
             return ops.stack(intermediate, axis=0), ops.stack(intermediate_reference_points, axis=0)
 
-# def run_decoder(decoderlayer_cell, decoder_cell, hidden_size, num_levels, num_channels, spatial_shapes, level_start_index):
-#     from deformable_encoder import run_encoder
-#     # prepare data for decoder
-#     def gen_encoder_output_proposals(memory:Tensor, memory_padding_mask:Tensor, spatial_shapes=None):
-#         N, S, C = memory.shape
-#         dtype = memory.dtype
-#         base_scale = 4.0
-#         proposals = []
-#         cur = 0
-#         for lvl, (H, W) in enumerate(spatial_shapes):
-#             mask_flatten = memory_padding_mask[:, cur:(cur + H * W)].reshape(N, H, W, 1)
-#             valid_H = (~mask_flatten[:, :, 0, 0]).sum(1)
-#             valid_W = (~mask_flatten[:, 0, :, 0]).sum(1)
-
-#             grid_y, grid_x = ops.meshgrid((ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
-#                                         ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(W - 1, dtype=mstype.float32), W)))
-#             grid = ops.concat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)],-1 )
-
-#             scale = ops.concat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(N, 1, 1, 2)
-#             grid = (ops.repeat_elements(grid.unsqueeze(0), N, axis=0) + 0.5) / scale
-#             wh = ops.ones_like(grid) * 0.05 * (2.0 ** lvl)
-#             proposal = ops.concat([grid, wh], -1).view(N, -1, 4)
-#             proposals.append(proposal)
-#             cur += (H * W)
-#         output_proposals = ops.concat( proposals, 1)
-#         output_proposals_valid = ops.tile(ops.logical_and(output_proposals > 0.01, output_proposals < 0.99).all(-1).unsqueeze(-1), 
-#                                                     (1, 1,output_proposals.shape[-1]))
-            
-#         output_proposals = ops.log(output_proposals / (1 - output_proposals))
-#         output_proposals = ops.MaskedFill()(output_proposals, memory_padding_mask.unsqueeze(-1), float('inf'))
-#         output_proposals = ops.MaskedFill()(output_proposals, ~output_proposals_valid, float('inf'))
-
-#         output_memory = memory
-#         output_memory = ops.MaskedFill()(output_memory, memory_padding_mask.unsqueeze(-1), float(0))
-#         # ignore because they won't change the shapes
-#         # output_memory = ops.where(~output_proposals_valid, float(0), output_memory)
-#         # output_memory = self.enc_output_norm(self.enc_output(output_memory))
-#         return output_memory, output_proposals
-#     def get_proposal_pos_embed( proposals):
-#         num_pos_feats = 64
-#         temperature = 10000
-#         scale = 2 * math.pi
-#         dim_t = mnp.arange(num_pos_feats, dtype=proposals.dtype)
-#         dim_t = temperature ** (2 * ops.FloorDiv()(dim_t, Tensor(2, proposals.dtype)) / num_pos_feats)
-#         proposals = ops.sigmoid(proposals) * scale
-#         pos = proposals[:,:,:,:, None] / dim_t # size incorrect?
-#         sin_pos = mnp.sin(pos[:, :, :, :, 0::2])
-#         cos_pos = mnp.cos(pos[:, :, :, :, 1::2])
-#         pos = ops.stack((sin_pos, cos_pos), axis=4).reshape((pos.shape[0], pos.shape[1],-1))
-#         return pos
-
-#     memory, [src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten] = \
-#         run_encoder(hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
-#     bs, _, c = memory.shape
-#     output_memory, output_proposals = gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
-#     enc_outputs_class = nn.Dense(hidden_size, 2)(output_memory)
-#     enc_outputs_coord_unact = nn.Dense(hidden_size, 4)(output_memory) + output_proposals
-
-#     topk = 300
-#     _, topk_proposals = ops.TopK(sorted=True)(enc_outputs_class[..., 0], topk)
-#     topk_proposals = ops.repeat_elements(mnp.expand_dims(topk_proposals, axis=-1), 4, axis=2)
-#     topk_coords_unact = ops.Gather()(enc_outputs_coord_unact, topk_proposals,1 )
-#     topk_coords_unact =  ops.stop_gradient(topk_coords_unact)
-#     reference_points = ops.sigmoid(topk_coords_unact)
-#     init_reference_out = reference_points
-#     #query_pos = nn.LayerNorm((hidden_size,))(nn.Dense(hidden_size, hidden_size)(get_proposal_pos_embed(topk_coords_unact)))
-    
-#     query_embed = mnp.expand_dims(query_embed, axis=0).repeat(bs, 1, 1, 1)
-#     query_pos_shape = query_pos.shape
-#     query_pos = mnp.expand_dims(query_pos, axis=2).repeat(1, 1, query_embed.shape[2], 1)
-#     query_pos = mnp.reshape(query_pos, (query_pos_shape[0] * query_pos_shape[1], query_pos_shape[2], query_pos_shape[3]))
-#     text_embed = mnp.expand_dims(text_embed, axis=0).repeat(bs, 1, 1, 1)
-
-#     # dummy 
-#     text_pos_embed = text_embed
-#     text_mask = None
-#     num_decoder_layers = 3
-#     return_intermediate_dec = False
-#     decoder_layer = decoderlayer_cell(hidden_size, hidden_size, ffn_hidden_size=1024,
-#                                                      
-#                                                       num_heads = 4, num_levels=3, num_points=4)
-#     decoder = decoder_cell(decoder_layer, num_decoder_layers, return_intermediate_dec)
-
-#     hs, hs_text, inter_references = decoder(
-#                 query_embed, text_embed, reference_points, memory, spatial_shapes, 
-#                 level_start_index, valid_ratios, query_pos, text_pos_embed, mask_flatten, text_mask
-#             )
-
-# if __name__ == "__main__":
-#     import numpy as np
-#     import mindspore.context as context
-#     # context.set_context(mode=context.PYNATIVE_MODE, device_target='GPU')
-#     context.set_context(mode=context.PYNATIVE_MODE, device_target='CPU')
-#     batch_size = 2
-#     hidden_size = 1024
-#     num_levels = 3
-#     num_channels = np.array([1024, 1024, 1024])
-#     spatial_shapes = np.array([[28, 28], [14, 14], [7, 7]])
-#     level_start_index = np.array([0, 28*28, 28*28+14*14])
-    
-#     run_decoder(DeformableCompositeTransformerDecoderLayer, DeformableCompositeTransformerDecoder,
-#         hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
-
-#     run_decoder(DeformableTransformerDecoderLayer, DeformableTransformerDecoder,
-#         hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)

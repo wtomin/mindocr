@@ -6,7 +6,7 @@ from .mindcv_models.resnet import ResNet, Bottleneck, default_cfgs
 from .mindcv_models.utils import load_pretrained
 from ._registry import register_backbone, register_backbone_class
 from mindocr.models.layers import PositionalEncoding2D
-import math
+
 __all__ = ['MaskedResNet', 'det_masked_joiner_resnet50']
 
 @register_backbone_class
@@ -42,36 +42,38 @@ class MaskedResNet(ResNet):
         x4 = self.layer4(x3)  # stride: 32
 
         multi_level_features =  [x2, x3, x4]
-        masks = self.mask_out_padding(
-            [features_per_level.shape for features_per_level in multi_level_features],
-            image_size
-        )
+        # masks = self.mask_out_padding(
+        #     [features_per_level.shape for features_per_level in multi_level_features],
+        #     image_size
+        # )
+        feature_shapes = [features_per_level.shape[-2:] for features_per_level in multi_level_features]
+        masks = [self.rescale_mask(image_mask, feature_shapes[i]) for i in range(len(feature_shapes))]
 
-        # output_features = [[multi_level_features[i],  masks[i]] for i in range(self.num_levels)]
         pos = []
         for i in range(len(multi_level_features)):
             # position encoding
             pos.append(self.positional_encoder(masks[i]))
         return multi_level_features, masks, pos
-        
-    def mask_out_padding(self, multilevel_feat_shapes, image_sizes):
-        masks = []
-        assert len(multilevel_feat_shapes) == len(self.feature_strides), "expected to get the same number of feature shapes and feature strides."
-        N_levels = len(multilevel_feat_shapes)
-        for idx in range(N_levels):
-            N, _, H, W = multilevel_feat_shapes[idx]
-            masks_per_feature_level = ops.ones((N, H, W), type=mstype.bool_) # dtype or type depends on the version of mindspore
-            N_imgs_batch = len(image_sizes)
-            image_sizes = image_sizes.float() # convert to float
-            for img_idx in range(N_imgs_batch):
-                h, w = image_sizes[img_idx]
-                h_i , w_i = Tensor(mnp.ceil(h / self.feature_strides[idx]), mstype.int32), Tensor( mnp.ceil( w / self.feature_strides[idx]), mstype.int32)
-                #ValueError: When using JIT Fallback to handle script 'math.ceil(float(h) / self.feature_strides[idx])', 
-                # the inputs should be constant, but found variable 'AbstractScalar(Type: String, Value: h, Shape: NoShape)' 
-                # to be nonconstant.
-                masks_per_feature_level[img_idx, :h_i, :w_i] = 0
-            masks.append(masks_per_feature_level)
-        return masks
+    def rescale_mask(self, mask, target_shape):
+        return ops.stop_gradient(ops.interpolate(mask.unsqueeze(1).float(), size=target_shape)[:, 0, :, :].bool())
+    # def mask_out_padding(self, multilevel_feat_shapes, image_sizes):
+    #     masks = []
+    #     assert len(multilevel_feat_shapes) == len(self.feature_strides), "expected to get the same number of feature shapes and feature strides."
+    #     N_levels = len(multilevel_feat_shapes)
+    #     for idx in range(N_levels):
+    #         N, _, H, W = multilevel_feat_shapes[idx]
+    #         masks_per_feature_level = ops.ones((N, H, W), dtype=mstype.bool_) # dtype or type depends on the version of mindspore
+    #         N_imgs_batch = len(image_sizes)
+    #         image_sizes = image_sizes.float() # convert to float
+    #         for img_idx in range(N_imgs_batch):
+    #             h, w = image_sizes[img_idx]
+    #             h_i , w_i = Tensor(mnp.ceil(h / self.feature_strides[idx]), mstype.int32), Tensor( mnp.ceil( w / self.feature_strides[idx]), mstype.int32)
+    #             #ValueError: When using JIT Fallback to handle script 'math.ceil(float(h) / self.feature_strides[idx])', 
+    #             # the inputs should be constant, but found variable 'AbstractScalar(Type: String, Value: h, Shape: NoShape)' 
+    #             # to be nonconstant.
+    #             masks_per_feature_level[img_idx, :h_i, :w_i] = 0
+    #         masks.append(masks_per_feature_level)
+    #     return masks
 
 
 def det_masked_resnet50(pretrained: bool = True, num_levels: int = 3,  **kwargs):

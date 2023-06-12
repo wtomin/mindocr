@@ -86,14 +86,17 @@ class DeformableTransformer(nn.Cell):
         base_scale = 4.0
         proposals = []
         cur = 0
-        spatial_shapes_list = spatial_shapes.asnumpy().tolist()
-        for lvl, (H, W) in enumerate(spatial_shapes_list):
+        #spatial_shapes_list = spatial_shapes.asnumpy().tolist()
+        lvl = 0
+        for shapes in spatial_shapes:
+            H, W = shapes
+            H, W = int(H), int(W)
             mask_flatten = memory_padding_mask[:, cur:(cur + H * W)].reshape(N, H, W, 1)
             valid_H = (~mask_flatten[:, :, 0, 0]).sum(1)
             valid_W = (~mask_flatten[:, 0, :, 0]).sum(1)
-
-            grid_y, grid_x = mnp.meshgrid(ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(H - 1, dtype=mstype.float32), H),
-                                        ops.linspace(Tensor(0, dtype=mstype.float32), Tensor(W - 1, dtype=mstype.float32), W))
+            yy = ops.linspace(Tensor(0, dtype=mstype.float32), ops.cast(H - 1, mstype.float32), H)
+            xx = ops.linspace(Tensor(0, dtype=mstype.float32), ops.cast(W - 1, mstype.float32), W)
+            grid_y, grid_x = ops.meshgrid(ops.cast(yy, mstype.int32), ops.cast(xx, mstype.int32))
             grid = ops.concat([grid_x.unsqueeze(-1), grid_y.unsqueeze(-1)],-1 )
 
             scale = ops.concat([valid_W.unsqueeze(-1), valid_H.unsqueeze(-1)], 1).reshape(N, 1, 1, 2)
@@ -102,6 +105,7 @@ class DeformableTransformer(nn.Cell):
             proposal = ops.concat([grid, wh], -1).view(N, -1, 4)
             proposals.append(proposal)
             cur += (H * W)
+            lvl += 1
         output_proposals = ops.concat( proposals, 1)
         output_proposals_valid = ops.logical_and(output_proposals > 0.01, output_proposals < 0.99).all(-1, keep_dims=True)
             
@@ -119,11 +123,13 @@ class DeformableTransformer(nn.Cell):
         temperature = 10000
         scale = 2 * math.pi
         dim_t = ops.range(Tensor(0, mstype.int32), Tensor(num_pos_feats, mstype.int32), Tensor(1, mstype.int32))
-        dim_t = temperature ** (2 * ops.FloorDiv()(dim_t, Tensor(2, proposals.dtype)) / num_pos_feats)
+        dim_t = temperature ** (2 * ops.FloorDiv()(dim_t, 2) / num_pos_feats)
         proposals = ops.sigmoid(proposals) * scale
         # N, L, 4
-        pos = proposals[:,:,:, None] / dim_t 
+        assert len(proposals.shape)==3, "expect proposals shape is [N, L, 4]"
+        pos = ops.unsqueeze(proposals, dim=3) / dim_t 
         # N, L, 4, 128
+        assert len(pos.shape)==4, "expect pos shape is [N, L, 4, num_pos_feats]"
         sin_pos = ops.sin(pos[:, :, :, 0::2])
         cos_pos = ops.cos(pos[:, :, :, 1::2])
         # N, L, 4, 64, 2
@@ -313,7 +319,7 @@ class TESTRDeformableTransformer(nn.Cell):
                 else:
                     src = self.input_proj[l](srcs[-1])
                 m = masks[0]
-                mask = ops.interpolate(m[ None].float(), sizes=src.shape[-2:] , mode='bilinear')[0].bool() # sizes or size depending on the version of mindspore
+                mask = self.rescale_mask(m, src.shape[-2:])
                 pos_l = pos_encoder(mask)
                 srcs.append(src)
                 masks.append(mask)
@@ -328,3 +334,6 @@ class TESTRDeformableTransformer(nn.Cell):
             srcs, masks, pos, ctrl_point_embed, text_embed, text_pos_embed, text_mask=None)
         
         return hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact
+    
+    def rescale_mask(self, mask, target_shape):
+        return ops.stop_gradient(ops.interpolate(mask[:, None, :, :].float(), size=target_shape)[:, 0, :, :].bool())

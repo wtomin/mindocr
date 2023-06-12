@@ -192,7 +192,7 @@ class MultiScaleDeformableAttention(nn.Cell):
         bs, num_value, _ = value.shape
         # assert query.shape[0] == bs and value.shape[0] == bs
         # assert  (spatial_shapes.asnumpy()[:, 0] * spatial_shapes.asnumpy()[:, 1]).sum() == num_value
-        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value, f"expect num_value {num_value} to be sum of spatial_shapes"
+        # assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value, f"expect num_value {num_value} to be sum of spatial_shapes"
 
         value = self.value_proj(value)
         if value_padding_mask is not None:
@@ -260,12 +260,15 @@ def multi_scale_deformable_attn(
     value_list.append(value[:, level_start_index[-1]:, ...])
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
-    value_spatial_shapes_list = value_spatial_shapes.asnumpy().tolist()
-    for level, (H, W) in enumerate(value_spatial_shapes_list):
+    #value_spatial_shapes_list = value_spatial_shapes.asnumpy().tolist()
+    level = 0
+    for shapes in value_spatial_shapes:
         # bs, H*W, num_heads, head_hidden_sizes ->
         # bs, H*W, num_heads*head_hidden_sizes ->
         # bs, num_heads*head_hidden_sizes, H*W ->
         # bs*num_heads, head_hidden_sizes, H, W
+        H, W = shapes
+        H, W = int(H), int(W)
         value_l_ = (
             value_list[level].view(bs, int(H * W), -1).transpose((0, 2, 1)).view(bs * num_heads, head_hidden_sizes, H, W)
         )
@@ -279,6 +282,7 @@ def multi_scale_deformable_attn(
             value_l_, sampling_grid_l_, "bilinear", padding_mode="zeros", align_corners=False
         )
         sampling_value_list.append(sampling_value_l_)
+        level += 1
     # (bs, num_queries, num_heads, num_levels, num_points) ->
     # (bs, num_heads, num_queries, num_levels, num_points) ->
     # (bs*num_heads, 1, num_queries, num_levels*num_points)

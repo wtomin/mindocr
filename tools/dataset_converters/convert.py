@@ -26,7 +26,7 @@ from svt import SVT_Converter
 from td500 import TD500_Converter
 from ctw1500 import CTW1500_Converter
 
-supported_datasets = ['ic15', 'totaltext', 'mlt2017', 'syntext150k', 'svt', 'td500', 'ctw1500']
+supported_datasets = ['ic15', 'totaltext', 'mlt2017', 'syntext150k', 'svt', 'td500', 'ctw1500', 'coco']
 
 
 def convert(dataset_name, task, image_dir, label_path, output_path=None, path_mode='relative'):

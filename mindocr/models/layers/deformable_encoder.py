@@ -144,6 +144,9 @@ class DeformableTransformerEncoderLayer(nn.Cell):
         """
         # self.check_input
         src2 = self.self_attn(self.with_pos_embed(src, pos), key = None, value=src, 
+                              #ValueError: For 'Add', x.shape and y.shape need to broadcast. 
+                              #The value of x.shape[-2] or y.shape[-2] must be 1 or -1 when they are not the same,
+                              #but got x.shape = [2, 8500, 256] and y.shape = [2, 7268, 256].
                               value_padding_mask = padding_mask, 
                               reference_points=reference_points, 
                               spatial_shapes=spatial_shapes, 
@@ -185,16 +188,19 @@ class DeformableTransformerEncoder(nn.Cell):
             reference_points (Tensor): The computed reference points.
         """
         reference_points_list = []
-        for lvl, (H, W) in enumerate(spatial_shapes):
+        lvl = 0
+        for shapes in spatial_shapes:
+            H, W = shapes
             # Create a grid of y and x coordinates for each position in the feature map as the reference points
-            ref_y, ref_x = mnp.meshgrid( ops.linspace(Tensor(0.5), Tensor(H - 0.5), H),
-                ops.linspace(Tensor(0.5), Tensor(W - 0.5), W)
-            ) 
+            yy = ops.linspace(Tensor(0.5, mstype.float32), ops.cast(H - 0.5, mstype.float32), H)
+            xx = ops.linspace(Tensor(0.5, mstype.float32), ops.cast(W - 0.5, mstype.float32), W)
+            ref_y, ref_x = mnp.meshgrid(ops.cast(yy, mstype.int32), ops.cast(xx, mstype.int32)) 
             # Normalize the coordinates
             ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H) #valid_ratios: [bs, w, h]
             ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W)
             ref = ops.stack((ref_x, ref_y), -1)
             reference_points_list.append(ref)
+            lvl += 1
         reference_points = ops.concat(reference_points_list, 1)
         reference_points = reference_points[:, :, None] * valid_ratios[:, None]
         return reference_points
@@ -221,82 +227,7 @@ class DeformableTransformerEncoder(nn.Cell):
         """
         output = src
         reference_points = self.get_reference_points(spatial_shapes, valid_ratios)
-        for _, layer in enumerate(self.layers):
+        for layer in self.layers:
             output = layer(output, pos, reference_points, spatial_shapes, level_start_index, padding_mask)
 
         return output
-
-# def run_encoder(hidden_size, num_levels, num_channels, spatial_shapes, level_start_index):
-#     """
-#     for debugging only
-#     """
-#     import numpy as np
-#     def get_valid_ratio(mask):
-#         _, H, W = mask.shape
-#         valid_H = np.sum(~mask[:, :, 0], axis=1)
-#         valid_W = np.sum(~mask[:, 0, :], axis=1)
-#         valid_ratio_h = valid_H.astype(np.float32) / H
-#         valid_ratio_w = valid_W.astype(np.float32) / W
-#         valid_ratio = np.stack([valid_ratio_w, valid_ratio_h], axis=-1)
-#         return valid_ratio
-#     srcs = []
-#     masks = []
-#     pos_embeds = []
-    
-#     for i_level in range(num_levels):
-#         src = np.random.random((num_channels[i_level], *spatial_shapes[i_level]))
-#         mask = np.zeros((*spatial_shapes[i_level])).astype('bool')
-#         pos_embed = np.random.random((num_channels[i_level], *spatial_shapes[i_level]))
-#         srcs.append(src)
-#         pos_embeds.append(pos_embed)
-#         masks.append(mask)
-#     level_embed = np.random.random((num_levels, hidden_size))
-#     # prepare data for encoder layer
-#     src_flatten = []
-#     mask_flatten = []
-#     lvl_pos_embed_flatten = []
-
-#     for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
-#         bs, c, h, w = src.shape
-#         # src = src.flatten(2).transpose(1, 2)
-#         # mask = mask.flatten(1)
-#         # pos_embed = pos_embed.flatten(2).transpose(1, 2)
-#         src = np.transpose(src.reshape((src.shape[0], src.shape[1], -1)), (0, 2, 1))
-#         mask = mask.reshape(mask.shape[0], -1)
-#         pos_embed = np.transpose(pos_embed.reshape((pos_embed.shape[0], pos_embed.shape[1], -1)), (0, 2, 1))
-#         lvl_pos_embed = pos_embed + level_embed[lvl].reshape((1, 1, -1))
-#         lvl_pos_embed_flatten.append(lvl_pos_embed)
-#         src_flatten.append(src)
-#         mask_flatten.append(mask)
-#     src_flatten = ms.Tensor(np.concatenate(src_flatten, 1), mstype.float32)
-#     mask_flatten = ms.Tensor(np.concatenate(mask_flatten, 1), mstype.bool_)
-#     lvl_pos_embed_flatten = ms.Tensor(np.concatenate(lvl_pos_embed_flatten, 1), mstype.float32)
-#     level_start_index = ms.Tensor(np.concatenate((np.zeros((1, )), spatial_shapes.prod(1).cumsum(0)[:-1])), mstype.int32)
-#     spatial_shapes = spatial_shapes.tolist()
-#     valid_ratios = ms.Tensor(np.stack([get_valid_ratio(m) for m in masks], 1), mstype.float32)
-
-#     encoder_layer = DeformableTransformerEncoderLayer(hidden_size, ffn_hidden_size=1024,
-#                                                       seq_length=src_flatten.shape[1], num_heads = 4, num_levels=3, num_points=4)
-#     encoder = DeformableTransformerEncoder(encoder_layer, num_layers = 3)
-#     output = encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
-    
-#     return output, [src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten]
-
-# if __name__ == "__main__":
-#     import numpy as np
-#     import mindspore.context as context
-#     # context.set_context(mode=context.PYNATIVE_MODE, device_target='GPU')
-#     context.set_context(mode=context.GRAPH_MODE, device_target='CPU')
-#     batch_size = 2
-#     hidden_size = 1024
-#     num_levels = 3
-#     num_channels = np.array([1024, 1024, 1024])
-#     spatial_shapes = np.array([[28, 28], [14, 14], [7, 7]])
-#     level_start_index = np.array([0, 28*28, 28*28+14*14])
-
-#     run_encoder(hidden_size, num_levels, num_channels, spatial_shapes, level_start_index)
-#     # On CPU, no error in PYNATIVE and GRAPH mode!
-#     # On GPU graph mode, it has no error. On GPU PyNative mode, it has the following error:
-#     # [ERROR] DEVICE(22276,7fd12cffd700,python):2023-03-21-17:45:06.989.961 [mindspore/ccsrc/runtime/pynative/async/async_queue.cc:75] WorkerLoop] Run task failed, error msg:For 'MatMul', encountered an exception: cuBLAS Error: cublasGemmEx failed. Possible reasons: the GPU is occupied by other processes. | Error Number: 8 CUBLAS_STATUS_ARCH_MISMATCH: The function requires a feature absent from the device architecture; usually caused by compute capability lower than 5.0.
-
-    

@@ -1,0 +1,189 @@
+system:
+  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
+  distribute: False
+  amp_level: 'O0'
+  seed: 42
+  log_interval: 2
+  val_while_train: False
+  drop_overflow_update: False
+
+model:
+  type: e2e
+  transform: null
+  backbone:
+    name: det_masked_joiner_resnet50
+    pretrained: True
+    hidden_size: 256
+  neck:
+    name: TESTRDeformableTransformer # Multi-Scale Deformable Attention
+    num_levels: 4
+    hidden_size: 256
+    num_heads: 8
+    ffn_hidden_size: 1024
+    num_encoder_layers: 6
+    num_decoder_layers: 6
+    dec_num_points: 4
+    enc_num_points: 4
+    num_ctrl_points: 16 # the number of points in the polygon or bezier points
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.0
+    activation: relu
+    pos_embed_scale: 6.283185307179586 #2 PI
+    max_text_len: 25
+    return_intermediate_dec: True
+    num_classes: 1
+    voc_size: 96
+    num_proposals: 100
+
+  head:
+    name: TESTRHead
+    num_classes: 1
+    num_pred: 6 # same to the number of decoder layers
+    use_polygon: True
+    aux_loss: True
+    voc_size: 96
+    hidden_size: 256
+
+postprocess:
+  name: DBPostprocess
+
+
+metric:
+  name: E2EMetric
+  main_indicator: f-score
+
+loss:
+  name: 'TESTRLoss'
+  num_classes: 1
+  num_ctrl_points: 16
+  point_class_weight: 2.0
+  point_coord_weight: 5.0
+  point_text_weight: 4.0
+  box_class_weight: 2.0
+  box_coord_weight: 5.0
+  box_giou_weight: 2.0
+  focal_alpha: 0.25
+  focal_gamma: 2.0
+  transformer_dec_layers: 6
+  aux_loss: True
+  
+scheduler:
+  scheduler: polynomial_decay
+  min_lr: 0.
+  lr: 0.00001 #1e-5 has string type problem
+  num_epochs: 1200
+  warmup_epochs: 0
+
+optimizer:
+  opt: SGD
+  filter_bias_and_bn: false
+  momentum: 0.9
+  weight_decay: 1.0e-4
+  loss_scale: 1.0
+
+train:
+  ckpt_save_dir: './tmp_e2e'
+  dataset_sink_mode: False 
+  clip_grad: True
+  clip_norm: 0.1
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: icdar2015/train_images
+    label_file: icdar2015/train_det_gt.txt
+    sample_ratio: [ 1.0 ]
+    shuffle: True
+    transform_pipeline:
+      - DecodeImage:
+          img_mode: BGR
+          to_float32: False
+      - RandomColorAdjust:
+          brightness: 0.1255  # 32.0 / 255
+          saturation: 0.5
+      - TESTRLabelEncode:
+          text_keyname: transcription
+          polygon_keyname: polys # 16 ctrl points
+          bbox_keyname: points
+      - IaaAugment: 
+          Resize: { size: [0.5, 1.5]}
+          Fliplr: { p: 0.5 } 
+      - RandomCropWithInstances:
+          crop_size: [0.7, 0.7]
+          crop_type: relative
+          keep_all_boxes: False 
+      - ResizePadImage:
+          target_size: [ 640, 640 ]
+          pad_value: 0
+      - ValidatePolygons:
+          affect_keys: ['polys', 'boxes', 'gt_classes', 'rec_ids', 'ignore_tags']
+          min_area: 100
+      - PadTESTRLabel:
+          target_len: 30
+          affect_keys: ['polys', 'boxes', 'gt_classes', 'rec_ids', 'ignore_tags']
+      - NormalizeImage:
+          bgr_to_rgb: True
+          is_hwc: True
+          mean: imagenet
+          std: imagenet
+      - ToCHWImage:
+    #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
+    output_columns: ['image', 'image_mask', 'image_size', 'polys', 'boxes', 'rec_ids', 'ignore_tags', 'gt_classes']
+    #output_keys: ['image'] # for debug op performance
+    net_input_column_index: [0, 1, 2] # num inputs for network forward func in output_keys
+    net_aux_input_column_index: []
+    label_column_index: [ 2, 3, 4, 5, 6, 7]
+#    keys_for_loss: 4 # num labels for loss func
+
+  loader:
+    shuffle: True # TODO: tbc
+    batch_size: 2
+    drop_remainder: True
+    max_rowsize: 32
+    num_workers: 1 # TODO: may lead to OOM
+
+
+
+eval:
+  dataset_sink_mode: False
+  dataset:
+    type: DetDataset
+    dataset_root: /data1/ddeng/workspace/ade_datasets
+    data_dir: icdar2015/test_images
+    label_file:  icdar2015/test_det_gt.txt
+    sample_ratio: [ 1.0 ]
+    shuffle: False
+    transform_pipeline:
+      - DecodeImage:
+          img_mode: BGR
+          to_float32: False
+      - TESTRLabelEncode:
+          text_keyname: transcription
+          polygon_keyname: polygons # 16 ctrl points
+          bbox_keyname: points
+      - RandomColorAdjust:
+          brightness: 0.1255  # 32.0 / 255
+          saturation: 0.5
+      - RandomCropWithBBox:
+          max_tries: 10
+          min_crop_ratio: 0.1
+          pad_if_needed: False
+      - IaaAugment:
+          Fliplr: { p: 0.5 }
+          Affine: { rotate: [ -10, 10 ] }
+      - NormalizeImage:
+          bgr_to_rgb: True
+          is_hwc: True
+          mean: imagenet
+          std: imagenet
+      - ToCHWImage:
+    #  the order of the dataloader list, matching the network input and the labels for evalution 
+    output_columns: ['image', 'polys', 'boxes', 'rec_ids', 'ignore_tags', 'gt_classes']
+    num_keys_to_net: 1 # num inputs for network forward func
+    num_keys_of_labels: 2 # num labels 
+
+  loader:
+    shuffle: False
+    batch_size: 1 # TODO: due to dynamic shape of polygons (num of boxes varies), BS has to be 1
+    drop_remainder: False 
+    max_rowsize: 20
+    num_workers: 1

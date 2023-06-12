@@ -22,7 +22,7 @@ class COCO_Converter(object):
         self.path_mode = path_mode
         self.extra_label_keys = extra_label_keys
         self.CTLABELS =  [' ','!','"','#','$','%','&','\'','(',')','*','+',',','-','.','/','0','1','2','3','4','5','6','7','8','9',':',';','<','=','>','?','@','A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U','V','W','X','Y','Z','[','\\',']','^','_','`','a','b','c','d','e','f','g','h','i','j','k','l','m','n','o','p','q','r','s','t','u','v','w','x','y','z','{','|','}','~']
-        self.vocabulary_size = len(self.CTLABELS)+1
+        self.vocabulary_size = len(self.CTLABELS)+1 # blank 
 
     def convert(self, task='det', image_dir=None, label_path=None, output_path=None):
         self.label_path = label_path
@@ -46,7 +46,7 @@ class COCO_Converter(object):
 
 
     def _format_det_label(self, image_dir, label_path, output_path):
-
+        
         with open(output_path, 'w') as out_file:
             coco_json_data = json.load(open(label_path, 'r'))
             # coco_json_data is a dictionary with keys: licenses, info, images, annotations, categories
@@ -67,6 +67,7 @@ class COCO_Converter(object):
             for image_id in tqdm.tqdm(images_to_annoations, total=len(images_to_annoations)):
                 annotations_per_image = images_to_annoations[image_id]
                 if len(annotations_per_image)==0:
+                    print("Found an image with no annotations, skipped...")
                     continue
                 img_path = os.path.join(image_dir, annotations_per_image[0]['file_name'])
                 assert os.path.exists(img_path), f'{img_path} not exist! Please check the input image_dir {image_dir}'
