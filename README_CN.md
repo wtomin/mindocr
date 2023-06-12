@@ -103,7 +103,7 @@ MindOCR提供易用的文本检测识别推理工具，支持CPU/GPU/Ascend 910�
 <details open>
 <summary>文本检测</summary>
 
-- [x] [DBNet](configs/det/dbnet/README.md) (AAAI'2020) 
+- [x] [DBNet](configs/det/dbnet/README.md) (AAAI'2020)
 - [x] [DBNet++](configs/det/dbnet/README.md) (TPAMI'2022)
 - [x] [PSENet](configs/det/psenet/README.md) (CVPR'2019)
 - [x] [EAST](configs/det/east/README.md)(CVPR'2017)
@@ -117,7 +117,7 @@ MindOCR提供易用的文本检测识别推理工具，支持CPU/GPU/Ascend 910�
 
 - [x] [CRNN](configs/rec/crnn/README.md) (TPAMI'2016)
 - [x] [CRNN-Seq2Seq/RARE](configs/rec/rare/README.md) (CVPR'2016)
-- [x] [SVTR](configs/rec/svtr/README.md) (IJCAI'2022) 
+- [x] [SVTR](configs/rec/svtr/README.md) (IJCAI'2022)
 - [ ] [ABINet](https://arxiv.org/abs/2103.06495) (CVPR'2021) [coming soon]
 
 
@@ -155,13 +155,45 @@ MindSpore Lite和ACL模型推理的支持列表，请见[MindOCR模型推理支�
 ## 重要信息
 
 ### 变更日志
+
+- 2023/06/07
+1. 增加新模型
+    - 文本检测[PSENet](configs/det/psenet)
+    - 文本检测[EAST](configs/det/east)
+    - 文本识别[SVTR](configs/rec/svtr)
+2. 添加更多基准数据集及其结果
+    - [totaltext](docs/cn/datasets/totaltext_CN.md)
+    - [mlt2017](docs/cn/datasets/mlt2017_CN.md)
+    - [chinese_text_recognition](docs/cn/datasets/chinese_text_recognition_CN.md)
+3. 增加断点重训(resume training)功能，可在训练意外中断时使用。如需使用，请在配置文件中`model`字段下增加`resume`参数，允许传入具体路径`resume: /path/to/train_resume.ckpt`或者通过设置`resume: True`来加载在ckpt_save_dir下保存的trian_resume.ckpt
+
+
+- 2023/05/15
+1. 增加新模型
+    - 文本检测[DBNet++](configs/det/dbnet)
+    - 文本识别[CRNN-Seq2Seq](configs/rec/rare)
+    - 在SynthText数据集上预训练的[DBNet](https://download.mindspore.cn/toolkits/mindocr/dbnet/dbnet_resnet50_synthtext-40655acb.ckpt)
+2. 添加更多基准数据集及其结果
+    - [SynthText](https://academictorrents.com/details/2dba9518166cbd141534cbf381aa3e99a087e83c), [MSRA-TD500](docs/cn/datasets/td500_CN.md), [CTW1500](docs/cn/datasets/ctw1500_CN.md)
+    - DBNet的更多基准结果可以[在此找到](configs/det/dbnet/README_CN.md).
+3. 添加用于保存前k个checkpoint的checkpoint manager并改进日志。
+4. Python推理代码重构。
+5. Bug修复：对大型数据集使用平均损失meter，在AMP训练中对ctcloss禁用`pred_cast_fp32`，修复存在无效多边形的错误。
+
 - 2023/05/04
-1. 参数修改：`num_columns_to_net` -> `net_input_column_index`: 输入网络的columns数量改为输入网络的columns索引
-2. 参数修改：`num_columns_of_labels` -> `label_column_index`: 代表label的columns数量改为代表label的columns索引
+1. 支持加载自定义的预训练checkpoint， 通过在yaml配置中将`model-pretrained`设置为checkpoint url或本地路径来使用。
+2. 支持设置执行包括旋转和翻转在内的数据增强操作的概率。
+3. 为模型训练添加EMA功能，可以通过在yaml配置中设置`train-ema`（默认值：False）和`train-ema_decay`来启用。
+4. 参数修改：`num_columns_to_net` -> `net_input_column_index`: 输入网络的columns数量改为输入网络的columns索引
+5. 参数修改：`num_columns_of_labels` -> `label_column_index`: 用索引替换数量，以表示lebel的位置。
+
+- 2023/04/21
+1. 添加参数分组以支持训练中的正则化。用法：在yaml config中添加`grouping_strategy`参数以选择预定义的分组策略，或使用`no_weight_decay_params`参数选择要从权重衰减中排除的层（例如，bias、norm）。示例可参考`configs/rec/crn/crnn_icdar15.yaml`
+2. 添加梯度积累，支持大批量训练。用法：在yaml配置中添加`gradient_accumulation_steps`，全局批量大小=batch_size * devices * gradient_aaccumulation_steps。示例可参考`configs/rec/crn/crnn_icdar15.yaml`
+3. 添加梯度裁剪，支持训练稳定。通过在yaml配置中将`grad_clip`设置为True来启用。
 
 - 2023/03/23
 1. 增加dynamic loss scaler支持, 且与drop overflow update兼容。如需使用, 请在配置文件中增加`loss_scale`字段并将`type`参数设为`dynamic`，参考例子请见`configs/rec/crnn/crnn_icdar15.yaml`
-
 
 - 2023/03/20
 1. 参数名修改：`output_keys` -> `output_columns`；`num_keys_to_net` -> `num_columns_to_net`；
