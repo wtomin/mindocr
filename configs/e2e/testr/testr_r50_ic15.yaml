@@ -1,5 +1,5 @@
 system:
-  mode: 0 # 0 for graph mode, 1 for pynative mode in MindSpore
+  mode: 1 # 0 for graph mode, 1 for pynative mode in MindSpore
   distribute: False
   amp_level: 'O0'
   seed: 42
@@ -72,7 +72,7 @@ scheduler:
   min_lr: 0.
   lr: 0.00001 #1e-5 has string type problem
   num_epochs: 1200
-  warmup_epochs: 3
+  warmup_epochs: 0
 
 optimizer:
   opt: SGD
