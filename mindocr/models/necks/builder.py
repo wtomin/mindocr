@@ -1,27 +1,27 @@
-from .fpn import FPN, DBFPN
+from .fpn import DBFPN, EASTFPN, FPN, PSEFPN
+from .img2seq import Img2Seq
 from .rnn import RNNEncoder
 from .select import Select
 from.deformable_transformer import TESTRDeformableTransformer
 
 __all__ = ['build_neck']
-supported_necks = ['FPN', 'DBFPN', 'RNNEncoder', 'Select', 'TESTRDeformableTransformer']
-
+supported_necks = ['FPN', 'DBFPN', 'RNNEncoder', 'Select', 'Img2Seq', 'PSEFPN', 'EASTFPN', 'TESTRDeformableTransformer']
 
 def build_neck(neck_name, **kwargs):
     """
     Build Neck network.
-    
+
     Args:
         neck_name (str): the neck name, which shoule be one of the supported_necks.
         kwargs (dict): input args for the neck network
-        
+
     Return:
         nn.Cell for neck module
-        
+
     Construct:
         Input: Tensor
         Output: Dict[Tensor]
-        
+
     Example:
         >>> # build RNNEncoder
         >>> from mindocr.models.necks import build_neck

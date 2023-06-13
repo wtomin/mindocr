@@ -28,6 +28,7 @@ model:
     name: AttentionHead
     hidden_size: 256
     out_channels: *num_classes
+    batch_max_length: *max_text_len
 
 postprocess:
   name: RecAttnLabelDecode
@@ -70,6 +71,7 @@ train:
     type: LMDBDataset
     dataset_root: path/to/data_lmdb_release/
     data_dir: training/
+    label_file: null
     sample_ratio: 1.0
     shuffle: True
     transform_pipeline:
@@ -110,6 +112,7 @@ eval:
     type: LMDBDataset
     dataset_root: path/to/data_lmdb_release/
     data_dir: validation/
+    label_file: null
     sample_ratio: 1.0
     shuffle: False
     transform_pipeline:

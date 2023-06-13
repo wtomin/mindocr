@@ -53,8 +53,9 @@ class TESTRHead(nn.Cell):
         self.ctrl_point_coord = _get_clones(self.ctrl_point_coord, num_pred)
         self.text_class = nn.Dense(self.hidden_size, self.voc_size + 1)
 
-    def construct(self, hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact, **kwargs):
+    def construct(self, inputs, **kwargs):
         # output
+        hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = inputs
         outputs_classes = []
         outputs_coords = []
         outputs_texts = []
@@ -87,14 +88,19 @@ class TESTRHead(nn.Cell):
             out['aux_outputs'] = self._set_aux_loss(
                 outputs_class, outputs_coord, outputs_text)
 
-        enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
+        enc_outputs_coord = ops.sigmoid(enc_outputs_coord_unact)
         out['enc_outputs'] = {
             'pred_logits': enc_outputs_class, 'pred_boxes': enc_outputs_coord}
         return out
     
     def _set_aux_loss(self, outputs_class, outputs_coord, outputs_text):
-        return [{'pred_logits': a, 'pred_ctrl_points': b, 'pred_texts': c}
-                for a, b, c in zip(outputs_class[:-1], outputs_coord[:-1], outputs_text[:-1])]
+        outputs = []
+        N = len(outputs_class) - 1
+        for i in range(N):
+            outputs.append({'pred_logits': outputs_class[i],
+                            'pred_ctrl_points': outputs_coord[i],
+                            'pred_texts': outputs_text[i]})
+        return outputs
     
     
     # def inference(self, ctrl_point_cls, ctrl_point_coord, text_pred, image_sizes):

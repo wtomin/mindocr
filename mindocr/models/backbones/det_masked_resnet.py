@@ -27,8 +27,8 @@ class MaskedResNet(ResNet):
         self.positional_encoder = PositionalEncoding2D(hidden_size//2, normalize=True)
     
 
-    def construct(self, image, image_mask, image_size):
-        #images = self.preprocess_image(images)
+    def construct(self, inputs):
+        image, image_mask = inputs
         x = image
         # basic stem
         x = self.conv1(x)  # stride: 2
@@ -55,7 +55,12 @@ class MaskedResNet(ResNet):
             pos.append(self.positional_encoder(masks[i]))
         return multi_level_features, masks, pos
     def rescale_mask(self, mask, target_shape):
-        return ops.stop_gradient(ops.interpolate(mask.unsqueeze(1).float(), size=target_shape)[:, 0, :, :].bool())
+        mask = ops.interpolate(mask.unsqueeze(1).float(), size=target_shape, mode='bilinear')
+        if mask.shape[1] != 1:
+            raise ValueError("Expected mask to have 1 channel, got {}".format(mask.shape[1])
+                             )
+        mask= mask.squeeze(1).bool()
+        return ops.stop_gradient(mask)
     # def mask_out_padding(self, multilevel_feat_shapes, image_sizes):
     #     masks = []
     #     assert len(multilevel_feat_shapes) == len(self.feature_strides), "expected to get the same number of feature shapes and feature strides."

@@ -6,27 +6,7 @@ from mindspore.ops import functional as F
 import mindspore.ops.operations as P
 import copy
 import numpy as np
-import yaml
-import os
-from addict import Dict
-import inspect
-def load_yaml_with_base(yaml_file_path):
-    assert os.path.exists(yaml_file_path), "file {} not found".format(yaml_file_path)
-    with open(yaml_file_path) as fp:
-        config = yaml.safe_load(fp)
-        config = Dict(config)
-        if '_base_' not in config:
-            return config
-        else:
-            assert isinstance(config._base_ , str), "expected a string, but got {}".format(type(config._base_))
-            base_config_fp = os.path.join(os.path.dirname(yaml_file_path), config._base_)
-            assert os.path.exists(base_config_fp), "file {} not found".format(config._base_)
-            base_config = load_yaml_with_base(base_config_fp)
-            config.pop('_base_')
-            base_config.update(config)
-            config = base_config
-            return config
-
+import mindspore as ms
 
 def accuracy(output, target, topk=(1,)):
     """Computes the precision@k for the specified values of k"""
@@ -51,26 +31,7 @@ def accuracy(output, target, topk=(1,)):
         res.append(correct_k * 100.0 / batch_size)
     return res
 
-# class NestedTensor(object):
-    
-#     def __init__(self, tensor, mask: Optional[Tensor]):
-#         self.tensor = tensor
-#         self.mask = mask
-#         pixel_indices = np.where(mask==0)
-#         min_x, min_y = pixel_indices[0].min(), pixel_indices[1].min()
-#         max_x, max_y = pixel_indices[0].max(), pixel_indices[1].max()
-#         size = [max_x - min_x+1, max_y - min_y+1]
-        
-#         self.image_sizes = size
-#     def decompose(self):
-#         return self.tensor, self.mask
 
-#     def __repr__(self):
-#         return str(self.tensor)
-
-# def nested_tensor_from_batch(image, image_mask, polys, rec_ids, ignore_tags, gt_classes, BatchInfo):
-#     nested_tensor = NestedTensor(image, image_mask)
-#     return nested_tensor, polys, rec_ids, ignore_tags, gt_classes, BatchInfo
 
 def _max_by_axis(the_list):
     # type: (List[List[int]]) -> List[int]
@@ -100,9 +61,9 @@ def _get_clones(module, N):
 def sigmoid_offset(x, offset=True):
     # modified sigmoid for range [-0.5, 1.5]
     if offset:
-        return x.sigmoid() * 2 - 0.5
+        return ops.sigmoid(x) * 2 - 0.5
     else:
-        return x.sigmoid()
+        return ops.sigmoid(x)
 
 def inverse_sigmoid(x, eps=1e-5):
     x = ops.clip_by_value(x, 0, 1)
@@ -125,7 +86,7 @@ def box_xyxy_to_cxcywh(x):
     x_min, x_max = x[:,:, 0].min(-1), x[:, :, 0].max(-1)
     y_min, y_max = x[:, :, 1].min(-1), x[:,:, 1].max(-1)
     b = [(x_min + x_max) / 2, (y_min + y_max) / 2, (x_max - x_min), (y_max - y_min)]
-    assert (b[2]>0).all() and (b[3] > 0).all()
+    assert (b[2]>=0).all() and (b[3] >= 0).all()
     return ops.stack(b, -1)
 
 def box_area(boxes):
@@ -171,58 +132,20 @@ def generalized_box_iou(boxes1, boxes2):
 
     return iou - (area - union) / (area+1e-6)
 
-# verify the torch version of iou, mindspore version of iou, custom implementation of iou
-def test_iou():
-    import torch
-    import torchvision
-    from mindspore import ops, Tensor
-    import mindspore.common.dtype as mstype
-    boxes1_xy = np.random.uniform(0, 1, size=(50, 2)) 
-    boxes2_xy = np.random.uniform(0, 1, size=(100, 2)) 
-    boxes1 = np.concatenate([boxes1_xy, boxes1_xy + np.random.uniform(0, 0.5, size=(50, 2))], axis=1) #(x1, y1, x2, y2)
-    boxes2 = np.concatenate([boxes2_xy, boxes2_xy + np.random.uniform(0, 0.5, size=(100, 2))], axis=1) #(x1, y1, x2, y2)
-    boxes1 = Tensor(boxes1, mstype.float32)
-    boxes2 = Tensor(boxes2, mstype.float32)
-    boxes1 = ops.clip_by_value(boxes1, 0, 1)
-    boxes2 = ops.clip_by_value(boxes2, 0, 1)
-    iou_ms = ops.iou(boxes1, boxes2).numpy().transpose()
-    iou_torch = torchvision.ops.box_iou(torch.Tensor(boxes1.numpy()), torch.Tensor(boxes2.numpy())).numpy()
-    eps = 1e-3
-    if np.allclose(iou_ms, iou_torch, atol = eps):
-        print("iou the same for mindspore and torch")
-    else:
-        print("iou different for mindspore and torch")
-    print("iou mindspore: ", iou_ms)
-    print("iou torch: ", iou_torch)
+class AverageMeter:
+    """Computes and stores the average and current value"""
 
-    iou_custom = box_iou(boxes1, boxes2)[0]
-    iou_custom = iou_custom.numpy()
-    if np.allclose(iou_ms, iou_custom, atol = eps):
-        print("iou the same for mindspore and custom")
-    if np.allclose(iou_torch, iou_custom, atol = eps):
-        print("iou the same for torch and custom")
+    def __init__(self) -> None:
+        self.reset()
 
-# verify the torch version of giou, and custom implementation of giou
-def test_giou():
-    import torch
-    import torchvision
-    from mindspore import ops, Tensor
-    import mindspore.common.dtype as mstype
-    boxes1_xy = np.random.uniform(0, 1, size=(50, 2)) 
-    boxes2_xy = np.random.uniform(0, 1, size=(100, 2)) 
-    boxes1 = np.concatenate([boxes1_xy, boxes1_xy + np.random.uniform(0, 0.5, size=(50, 2))], axis=1) #(x1, y1, x2, y2)
-    boxes2 = np.concatenate([boxes2_xy, boxes2_xy + np.random.uniform(0, 0.5, size=(100, 2))], axis=1) #(x1, y1, x2, y2)
-    boxes1 = Tensor(boxes1, mstype.float32)
-    boxes2 = Tensor(boxes2, mstype.float32)
-    boxes1 = ops.clip_by_value(boxes1, 0, 1)
-    boxes2 = ops.clip_by_value(boxes2, 0, 1)
+    def reset(self) -> None:
+        self.val = Tensor(0.0, dtype=ms.float32)
+        self.avg = Tensor(0.0, dtype=ms.float32)
+        self.sum = Tensor(0.0, dtype=ms.float32)
+        self.count = Tensor(0.0, dtype=ms.float32)
 
-    giou_custom = generalized_box_iou(boxes1, boxes2).numpy()
-    giou_torch = torchvision.ops.generalized_box_iou(torch.Tensor(boxes1.numpy()), torch.Tensor(boxes2.numpy())).numpy()
-    eps = 1e-3
-    if np.allclose(giou_custom, giou_torch, atol = eps):
-        print("giou the same for custom and torch")
-    else:
-        print("giou different for custom and torch")
-if __name__ == "__main__":
-    test_giou() 
+    def update(self, val: Tensor, n: int = 1) -> None:
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

@@ -55,22 +55,24 @@ class PositionalEncoding2D(nn.Cell):
         y_embed = not_mask.cumsum(1, dtype=mstype.float32)
         x_embed = not_mask.cumsum(2, dtype=mstype.float32)
         if self.normalize:
-            eps = 1e-5 #torch version uses 1e-6
+            eps = 1e-6
             y_embed = (y_embed - 0.5) / (y_embed[:, -1:, :] + eps) * self.scale
             x_embed = (x_embed - 0.5) / (x_embed[:, :, -1:] + eps) * self.scale
 
         dim_t = ops.range(Tensor(0, mstype.int32), Tensor(self.num_pos_feats, mstype.int32), Tensor(1, mstype.int32))
-        dim_t = self.temperature ** (2 * ops.FloorDiv()(dim_t, 2) / self.num_pos_feats)
+        dim_t = self.temperature ** (2 * (dim_t // 2) / self.num_pos_feats)
 
         pos_x = ops.unsqueeze(x_embed, dim=3) / dim_t 
         pos_y = ops.unsqueeze(y_embed, dim=3) / dim_t
-        pos_x_stack = ops.stack([ops.sin(pos_x[:, :, :, 0::2]), ops.cos(pos_x[:, :, :, 1::2])], axis=4)
-        pos_x = ops.reshape(Tensor(pos_x_stack, mstype.float32), 
-                              (pos_x_stack.shape[0], pos_x_stack.shape[1], pos_x_stack.shape[2], pos_x_stack.shape[3]*pos_x_stack.shape[4]))
+        pos_x = ops.stack([ops.sin(pos_x[:, :, :, 0::2]), 
+                           ops.cos(pos_x[:, :, :, 1::2])], axis=4)
+        
+        s1, s2, s3, _, _ = pos_x.shape
+        pos_x = ops.reshape(pos_x, (s1, s2, s3, -1))
 
-        pos_y_stack = ops.stack([ops.sin(pos_y[:, :, :, 0::2]), ops.cos(pos_y[:, :, :, 1::2])], axis=4)
-        pos_y = ops.reshape(Tensor(pos_y_stack, mstype.float32),
-                                (pos_y_stack.shape[0], pos_y_stack.shape[1], pos_y_stack.shape[2], pos_y_stack.shape[3]*pos_y_stack.shape[4]))
-        pos = ops.concat([pos_y, pos_x], axis=3)
-        pos = ops.permute(pos, (0, 3, 1, 2))
+        pos_y = ops.stack([ops.sin(pos_y[:, :, :, 0::2]), 
+                                 ops.cos(pos_y[:, :, :, 1::2])], axis=4)
+        s1, s2, s3, _, _ = pos_y.shape
+        pos_y = ops.reshape(pos_y, (s1, s2, s3, -1))
+        pos = ops.transpose(ops.concat((pos_y, pos_x), axis=3), (0, 3, 1, 2))
         return pos

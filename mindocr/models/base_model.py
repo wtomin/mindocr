@@ -1,10 +1,14 @@
 from addict import Dict
+
 from mindspore import nn
+
 from .backbones import build_backbone
-from .necks import build_neck
 from .heads import build_head
+from .necks import build_neck
+from .transforms import build_trans
 
 __all__ = ['BaseModel']
+
 
 class BaseModel(nn.Cell):
     def __init__(self, config: dict):
@@ -19,10 +23,18 @@ class BaseModel(nn.Cell):
         super(BaseModel, self).__init__()
 
         config = Dict(config)
+
+        if config.transform:
+            transform_name = config.transform.pop('name')
+            self.transform = build_trans(transform_name, **config.transform)
+        else:
+            self.transform = None
+
         backbone_name = config.backbone.pop('name')
         self.backbone = build_backbone(backbone_name, **config.backbone)
 
-        assert hasattr(self.backbone, 'out_channels'), f'Backbones are required to provide out_channels attribute, but not found in {backbone_name}'
+        assert hasattr(self.backbone, 'out_channels'), f'Backbones are required to provide out_channels attribute, ' \
+                                                       f'but not found in {backbone_name}'
 
         if 'neck' not in config or config.neck is None:
             neck_name = 'Select'
@@ -30,31 +42,35 @@ class BaseModel(nn.Cell):
             neck_name = config.neck.pop('name')
         self.neck = build_neck(neck_name, in_channels=self.backbone.out_channels, **config.neck)
 
-        assert hasattr(self.neck, 'out_channels'), f'Necks are required to provide out_channels attribute, but not found in {neck_name}'
+        assert hasattr(self.neck, 'out_channels'), f'Necks are required to provide out_channels attribute, ' \
+                                                   f'but not found in {neck_name}'
 
         head_name = config.head.pop('name')
         self.head = build_head(head_name, in_channels=self.neck.out_channels, **config.head)
 
         self.model_name = f'{backbone_name}_{neck_name}_{head_name}'
 
-    def construct(self, *args, **kwargs):
+    def construct(self, x, aux_input=None):
+        if self.transform is not None:
+            x = self.transform(x)
+
         # TODO: return bout, hout for debugging, using a dict.
-        bout = self.backbone(*args)
+        bout = self.backbone(x)
 
-        nout = self.neck(*bout)
+        nout = self.neck(bout)
 
-        if len(kwargs)!=0:
-            hout = self.head(*nout, **kwargs)
+        if aux_input is not None:
+            hout = self.head(nout, aux_input)
         else:
-            hout = self.head(*nout)
+            hout = self.head(nout)
 
         # resize back for postprocess
-        #y = F.interpolate(y, size=(H, W), mode='bilinear', align_corners=True)
+        # y = F.interpolate(y, size=(H, W), mode='bilinear', align_corners=True)
 
         return hout
 
 
-if __name__=='__main__':
+if __name__ == '__main__':
     model_config = {
             "backbone": {
                 'name': 'det_resnet50',
@@ -74,9 +90,11 @@ if __name__=='__main__':
     model_config.pop('neck')
     model = BaseModel(model_config)
 
-    import mindspore as ms
     import time
+
     import numpy as np
+
+    import mindspore as ms
 
     bs = 8
     x = ms.Tensor(np.random.rand(bs, 3, 640, 640), dtype=ms.float32)

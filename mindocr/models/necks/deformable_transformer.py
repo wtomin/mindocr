@@ -86,6 +86,7 @@ class DeformableTransformer(nn.Cell):
         base_scale = 4.0
         proposals = []
         cur = 0
+        import pdb; pdb.set_trace()
         #spatial_shapes_list = spatial_shapes.asnumpy().tolist()
         lvl = 0
         for shapes in spatial_shapes:
@@ -123,7 +124,7 @@ class DeformableTransformer(nn.Cell):
         temperature = 10000
         scale = 2 * math.pi
         dim_t = ops.range(Tensor(0, mstype.int32), Tensor(num_pos_feats, mstype.int32), Tensor(1, mstype.int32))
-        dim_t = temperature ** (2 * ops.FloorDiv()(dim_t, 2) / num_pos_feats)
+        dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
         proposals = ops.sigmoid(proposals) * scale
         # N, L, 4
         assert len(proposals.shape)==3, "expect proposals shape is [N, L, 4]"
@@ -175,14 +176,16 @@ class DeformableTransformer(nn.Cell):
         memory = self.encoder(src_flatten, spatial_shapes, level_start_index, valid_ratios, lvl_pos_embed_flatten, mask_flatten)
 
         bs, _, c = memory.shape
-        output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
-        enc_outputs_class = self.bbox_class_embed(output_memory)
-        enc_outputs_coord_unact = self.bbox_embed(output_memory) + output_proposals
+        # output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
+        # enc_outputs_class = self.bbox_class_embed(output_memory)
+        # enc_outputs_coord_unact = self.bbox_embed(output_memory) + output_proposals
+        enc_outputs_class = self.bbox_class_embed(memory) # fake code
+        enc_outputs_coord_unact = self.bbox_embed(memory) # fake code
         
         topk = self.num_proposals
-        _, topk_proposals = ops.TopK(sorted=True)(enc_outputs_class[..., 0], topk)
-        topk_proposals = mnp.tile(topk_proposals.unsqueeze(-1), (1, 1, 4))
-        topk_coords_unact = ops.GatherD()(enc_outputs_coord_unact, 1, topk_proposals) 
+        _, topk_proposals_indices = ops.TopK(sorted=True)(enc_outputs_class[..., 0], topk)
+        topk_proposals_indices = ops.tile(topk_proposals_indices.unsqueeze(-1), (1, 1, 4))
+        topk_coords_unact = ops.gather_elements(enc_outputs_coord_unact, 1, topk_proposals_indices) 
         topk_coords_unact =  ops.stop_gradient(topk_coords_unact)
         reference_points = ops.sigmoid(topk_coords_unact)
         init_reference_out = reference_points
@@ -298,8 +301,8 @@ class TESTRDeformableTransformer(nn.Cell):
 
         self.out_channels = self.hidden_size # it is for argument setting, not used by the TESTRHead
     
-    def construct(self, features, masks, pos):
-
+    def construct(self, inputs):
+        features, masks, pos = inputs
         if self.num_levels == 1:
             features = [features[-1]]
             pos = [pos[-1]]
@@ -336,4 +339,9 @@ class TESTRDeformableTransformer(nn.Cell):
         return hs, hs_text, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact
     
     def rescale_mask(self, mask, target_shape):
-        return ops.stop_gradient(ops.interpolate(mask[:, None, :, :].float(), size=target_shape)[:, 0, :, :].bool())
+        mask = ops.interpolate(mask.unsqueeze(1).float(), size=target_shape, mode='bilinear')
+        if mask.shape[1] != 1:
+            raise ValueError("Expected mask to have 1 channel, got {}".format(mask.shape[1])
+                             )
+        mask= mask.squeeze(1).bool()
+        return ops.stop_gradient(mask)

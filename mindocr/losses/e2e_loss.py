@@ -241,6 +241,33 @@ class TESTRLoss(LossBase):
         return batch_idx, src_idx
 
 
+    # def prepare_targets(self, targets):
+    #     """
+    #     prepare the 
+    #     """
+    #     new_targets = {'enc': [], 'dec': []}
+    #     image_sizes = targets['image_size'][:, ::-1] # h,w order
+    #     raw_ctrl_points = targets['polys'] if self.use_polygon else targets['beziers']
+    #     gt_classes = targets['gt_classes'] # 0 indicates the text instances, 1 indicates padded instances
+    #     ignore_tags = targets['ignore_tags']
+    #     gt_text_ids = targets['rec_ids']
+    #     import pdb; pdb.set_trace()
+    #     for i in range(len(image_sizes)):
+    #         # prepare encoder labels and gt_boxes
+    #         non_pad_mask = gt_classes[i] == 0 
+    #         gt_class = gt_classes[i][non_pad_mask] # mask cause dynamic shape
+    #         gt_boxes_per_image = targets['boxes'][i][non_pad_mask] / image_sizes[i] # (N, 4, 2)
+    #         gt_boxes_per_image = box_xyxy_to_cxcywh(gt_boxes_per_image) # (x_center, y_center, width, height)
+    #         new_targets['enc'].append({'labels': gt_class, 'boxes': gt_boxes_per_image})
+    #         # prepare decoder labels, gt_ctrl_points and text_ids
+    #         non_ignore_tags = ~ignore_tags[i]
+    #         gt_ctrl_points = raw_ctrl_points[i][non_ignore_tags& non_pad_mask] # (N, num_ctrl_points, 3), the last dimension indicates the visibility
+    #         gt_ctrl_points[:, :, :2] = gt_ctrl_points[:,:, :2] / image_sizes[i] # normalize the coordinates
+    #         gt_class = gt_classes[i][non_ignore_tags& non_pad_mask]
+    #         gt_text_id = gt_text_ids[i][non_ignore_tags& non_pad_mask]
+    #         new_targets['dec'].append({'ctrl_points': gt_ctrl_points, 'labels': gt_class, 'texts': gt_text_id})
+
+    #     return new_targets
     def prepare_targets(self, targets):
         """
         prepare the 
@@ -251,20 +278,20 @@ class TESTRLoss(LossBase):
         gt_classes = targets['gt_classes'] # 0 indicates the text instances, 1 indicates padded instances
         ignore_tags = targets['ignore_tags']
         gt_text_ids = targets['rec_ids']
+        import pdb; pdb.set_trace()
         for i in range(len(image_sizes)):
             # prepare encoder labels and gt_boxes
-            non_pad_mask = gt_classes[i] == 0 
-            gt_class = gt_classes[i][non_pad_mask]
-            gt_boxes_per_image = targets['boxes'][i][non_pad_mask] / image_sizes[i] # (N, 4, 2)
-            gt_boxes_per_image = box_xyxy_to_cxcywh(gt_boxes_per_image) # (x_center, y_center, width, height)
+            # non_pad_mask = gt_classes[i] == 0 
+            gt_class = gt_classes[i] # mask cause dynamic shape
+            gt_boxes_per_image = targets['boxes'][i] / image_sizes[i] # (N, 4, 2)
+            gt_boxes_per_image = box_xyxy_to_cxcywh(gt_boxes_per_image) # (x_center, y_center, width, height) zeros won't change
             new_targets['enc'].append({'labels': gt_class, 'boxes': gt_boxes_per_image})
             # prepare decoder labels, gt_ctrl_points and text_ids
             non_ignore_tags = ~ignore_tags[i]
-            gt_ctrl_points = raw_ctrl_points[i][non_ignore_tags& non_pad_mask] # (N, num_ctrl_points, 3), the last dimension indicates the visibility
+            gt_ctrl_points = raw_ctrl_points[i] # (N, num_ctrl_points, 3), the last dimension indicates the visibility
             gt_ctrl_points[:, :, :2] = gt_ctrl_points[:,:, :2] / image_sizes[i] # normalize the coordinates
-            gt_class = gt_classes[i][non_ignore_tags& non_pad_mask]
-            gt_text_id = gt_text_ids[i][non_ignore_tags& non_pad_mask]
-            new_targets['dec'].append({'ctrl_points': gt_ctrl_points, 'labels': gt_class, 'texts': gt_text_id})
+            gt_text_id = gt_text_ids[i]
+            new_targets['dec'].append({'ctrl_points': gt_ctrl_points, 'labels': gt_class, 'texts': gt_text_id, 'ignore_tags': ignore_tags[i]})
 
         return new_targets
 
