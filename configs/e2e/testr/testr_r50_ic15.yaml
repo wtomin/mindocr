@@ -129,7 +129,7 @@ train:
     #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize 
     output_columns: ['image', 'image_mask', 'image_size', 'polys', 'boxes', 'rec_ids', 'ignore_tags', 'gt_classes']
     #output_keys: ['image'] # for debug op performance
-    net_input_column_index: [0, 1, 2] # num inputs for network forward func in output_keys
+    net_input_column_index: [0, 1] # num inputs for network forward func in output_keys
     net_aux_input_column_index: []
     label_column_index: [ 2, 3, 4, 5, 6, 7]
 #    keys_for_loss: 4 # num labels for loss func
