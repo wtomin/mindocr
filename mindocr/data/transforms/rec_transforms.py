@@ -162,8 +162,8 @@ class VisionLANLabelEncode(RecCTCLabelEncode):
         text = data['label']  # original string
         # 1. randomly select a character to be occluded, save its index to label_id
         len_str = len(text)
-        if len_str <= 0:
-            return None
+        if len_str == 0:
+            raise ValueError("The length of the label string is zero")
         change_num = 1
         order = list(range(len_str))
         label_id = sample(order, change_num)[0] # randomly select the change character index
@@ -180,7 +180,7 @@ class VisionLANLabelEncode(RecCTCLabelEncode):
         #3. encode strings (valid characters) to indices
         char_indices = str2idx(data['label'], self.dict, max_text_len=self.max_text_len, lower=self.lower)
         if char_indices is None:
-            return None
+            char_indices = []
         label_res = str2idx(label_res, self.dict, max_text_len=self.max_text_len, lower=self.lower)
         label_sub = str2idx(label_sub, self.dict, max_text_len=self.max_text_len, lower=self.lower)
         if label_res is None:

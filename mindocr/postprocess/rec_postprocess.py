@@ -167,7 +167,8 @@ class VisionLANPostProcess(RecCTCLabelDecode):
         self.max_text_length = kwargs.get('max_text_length', 25)
         assert blank_at_last == False, "VisionLAN uses blank_at_last =  False, please check your configuration for VisionLANPostProcess"
 
-    def __call__(self, preds, labels=None,  length=None, *args, **kwargs):
+
+    def __call__(self, preds, *args, **kwargs):
         if isinstance(preds, Tensor): # eval mode
             text_pre = preds.numpy() # (max_len, b, 37)) before the softmax function
             b = text_pre.shape[1]
@@ -219,11 +220,8 @@ class VisionLANPostProcess(RecCTCLabelDecode):
             texts.append(preds_text)
             raw_chars.append(pred_chars)
             confs.append(preds_prob)
+        return {'texts': texts, 'confs': confs, 'raw_chars': raw_chars}
 
-        if labels is None:
-            return {'texts': texts, 'confs': confs, 'raw_chars': raw_chars}
-        labels = self.decode(labels) # decode to character indexes
-        return texts, labels
 
 class RecAttnLabelDecode:
     def __init__(

@@ -3,7 +3,7 @@ system:
   distribute: True
   amp_level: 'O0'
   seed: 42
-  log_interval: 100
+  log_interval: 200
   val_while_train: True
   drop_overflow_update: False
   training_step: &training_step 'LF_1'
@@ -87,7 +87,7 @@ train:
   ema_decay: 0.9999
   clip_norm: 20.0
   ckpt_save_dir: './tmp_visionlan/LF_1'
-  dataset_sink_mode: True
+  dataset_sink_mode: False
   pred_cast_fp32: False
   dataset:
     type: LMDBDataset
@@ -134,7 +134,7 @@ train:
 
 eval:
   ckpt_load_path: ./tmp_visionlan/LF_1/best.ckpt
-  dataset_sink_mode: True
+  dataset_sink_mode: False
   dataset:
     type: LMDBDataset
     dataset_root: ../data_lmdb_release
@@ -155,7 +155,7 @@ eval:
       - SVTRRecResizeImg:
           image_shape: [64, 256] # H, W
           padding: False
-      - NormalizeImage:  # different from paddle (paddle wrongly normalize BGR image with RGB mean/std from ImageNet for det, and simple rescale to [-1, 1] in rec. 
+      - NormalizeImage:  
           bgr_to_rgb: True
           is_hwc: True
           mean : [127.0, 127.0, 127.0] 
