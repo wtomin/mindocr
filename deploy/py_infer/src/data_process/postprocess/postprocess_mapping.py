@@ -6,6 +6,8 @@ POSTPROCESS_MAPPING_OPS = {
     "EASTPostprocess": det_postprocess.EASTPostprocess,
     "DistillationDBPostProcess": det_postprocess.DBPostprocess,
     "PSEPostprocess": det_postprocess.PSEPostprocess,
+    "SASTPostprocess": det_postprocess.SASTPostprocess,
+    "FCEPostprocess": det_postprocess.FCEPostprocess,
     # rec
     "RecCTCLabelDecode": rec_postprocess.RecCTCLabelDecode,
     "CTCLabelDecode": rec_postprocess.RecCTCLabelDecode,
