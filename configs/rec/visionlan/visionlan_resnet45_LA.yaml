@@ -21,6 +21,7 @@ common:
 model:
   type: rec
   transform: null
+  resume: False
   state_dict: # the initial state dict needs to be provided for LF_2 and LA
     init_ckpt: ./tmp_visionlan/LF_2/best.ckpt
     strict_load: False
