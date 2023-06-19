@@ -222,7 +222,7 @@ class MLM(nn.Cell):
         self.we = nn.Dense(n_dim, 1)
         self.sigmoid = nn.Sigmoid()
 
-    def construct(self, input, label_pos, state=False):
+    def construct(self, input, label_pos):
         # transformer unit for generating mask_c
         feature_v_seq = self.MLM_SequenceModeling_mask(input, src_mask=None)
         # position embedding layer
@@ -273,12 +273,13 @@ class MLM_VRM(nn.Cell):
                  nclass: int = 37):
         super().__init__()
 
-        self.MLM = MLM()
+        self.MLM = MLM(n_dim, n_position, max_text_length)
         self.SequenceModeling = TransformerEncoder(n_layers=n_layers, n_position=n_position)
         # N_max_character = 1 eos + 25 characters
         self.Prediction = Prediction(n_dim=n_dim, n_position=n_position,
                                      N_max_character=max_text_length+1, n_class=nclass)
         self.nclass = nclass
+
 
     def construct(self, input, label_pos, training_stp, is_train=False):
         b, c, h, w = input.shape
@@ -295,20 +296,23 @@ class MLM_VRM(nn.Cell):
                 return text_pre, text_pre, text_pre, text_pre
             elif training_stp == 'LF_2':  # second stage(language-free): train with MLM, finetune the other parts
                 # MLM
-                f_res, f_sub, mask_c = self.MLM(input, label_pos, state=True)
+                f_res, f_sub, mask_c = self.MLM(input, label_pos)
                 input = self.SequenceModeling(input, src_mask=None)
                 text_pre, test_rem, text_mas = self.Prediction(input, f_res, f_sub, is_train=True)
                 mask_c_show = trans_1d_2d(mask_c.transpose((0, 2, 1)))
                 return text_pre, test_rem, text_mas, mask_c_show
-            elif training_stp == 'LA':  # third stage(language-aware): using generated mask to mask out images
+            elif training_stp == 'LA':  # third stage(language-aware): using generated mask to mask out feature maps
                 # MLM
-                f_res, f_sub, mask_c = self.MLM(input, label_pos, state=True)
+                f_res, f_sub, mask_c = self.MLM(input, label_pos)
                 # use the mask_c (1 for occluded character and 0 for remaining characters) to occlude input
                 # ratio controls the occluded number in a batch
-                ratio = 2
-                character_mask = ops.ZerosLike()(mask_c)
-                character_mask[0:b // ratio, :, :] = mask_c[0:b // ratio, :, :]
-                input = input * (1 - character_mask.transpose((0, 2, 1)).float())
+                ratio = b // 2
+                character_mask = ops.zeros_like(mask_c)
+                if ratio >= 1:
+                    character_mask[0:ratio, :, :] = mask_c[0:ratio, :, :]
+                else:
+                    character_mask = mask_c
+                input = input * (1 - character_mask.transpose((0, 2, 1)))
                 # VRM
                 # transformer unit for VRM
                 input = self.SequenceModeling(input, src_mask=None)

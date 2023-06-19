@@ -9,7 +9,7 @@ system:
   training_step: &training_step 'LF_1'
 
 common:
-  character_dict_path: &character_dict_path  mindocr/utils/dict/en_dict_36.txt
+  character_dict_path: &character_dict_path
   num_classes: &num_classes 37 # num_chars_in_dict+1,  TODO: retreive it from dict or check correctness
   max_text_len: &max_text_len 25
   infer_mode: &infer_mode False
@@ -91,8 +91,8 @@ train:
   pred_cast_fp32: False
   dataset:
     type: LMDBDataset
-    dataset_root: ../data_lmdb_release # Optional, if set, dataset_root will be used as a prefix for data_dir
-    data_dir: training/
+    dataset_root: ./datasets # Optional, if set, dataset_root will be used as a prefix for data_dir
+    data_dir: train
     # label_file: # not required when using LMDBDataset
     sample_ratio: 1.0
     shuffle: True
@@ -113,11 +113,11 @@ train:
       - SVTRRecResizeImg:
           image_shape: [64, 256] # H, W
           padding: False
-      - NormalizeImage:  # different from paddle (paddle wrongly normalize BGR image with RGB mean/std from ImageNet for det, and simple rescale to [-1, 1] in rec.
+      - NormalizeImage:
           bgr_to_rgb: True
           is_hwc: True
-          mean : [127.0, 127.0, 127.0]
-          std : [127.0, 127.0, 127.0]
+          mean : [0, 0, 0]
+          std : [255.0, 255.0, 255.0] # same as ToTensor()
       - ToCHWImage:
     #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize
     output_columns: ['image', 'label', 'label_res', 'label_sub', 'label_id', 'length']
@@ -137,8 +137,8 @@ eval:
   dataset_sink_mode: False
   dataset:
     type: LMDBDataset
-    dataset_root: ../data_lmdb_release
-    data_dir: validation/
+    dataset_root: ./datasets
+    data_dir: evaluation/Sumof6benchmarks
     # label_file: # not required when using LMDBDataset
     sample_ratio: 1.0
     shuffle: False
@@ -158,8 +158,8 @@ eval:
       - NormalizeImage:
           bgr_to_rgb: True
           is_hwc: True
-          mean : [127.0, 127.0, 127.0]
-          std : [127.0, 127.0, 127.0]
+          mean : [0, 0, 0]
+          std : [255.0, 255.0, 255.0] # same as ToTensor()
       - ToCHWImage:
     #  the order of the dataloader list, matching the network input and the input labels for the loss function, and optional data for debug/visaulize
     output_columns: ['image', 'text_padded', 'length']

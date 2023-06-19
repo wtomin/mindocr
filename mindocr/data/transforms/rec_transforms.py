@@ -2,16 +2,17 @@
 transform for text recognition tasks.
 """
 import math
+from random import sample
 from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
-from random import sample
+
 
 __all__ = [
     "RecCTCLabelEncode",
     "RecAttnLabelEncode",
-    "VisionLANLabelEncode", 
+    "VisionLANLabelEncode",
     "RecResizeImg",
     "RecResizeNormForInfer",
     "SVTRRecResizeImg",
@@ -133,40 +134,46 @@ class RecCTCLabelEncode(object):
 
         return data
 
-class VisionLANLabelEncode(RecCTCLabelEncode):
-    """ Encode the VisionLAN labels"""
 
-    def __init__(self,
-                 max_text_len,
-                 character_dict_path=None,
-                 use_space_char=False,
-                 blank_at_last=True,
-                 lower=False,
-                 **kwargs):
-        super(VisionLANLabelEncode, self).__init__(max_text_len,
-                                            character_dict_path, use_space_char, blank_at_last, lower)
-        assert blank_at_last == False, "VisionLAN applies the blank at the beginning of the dictionary, so the blank_at_last should be False"
-        self.max_text_len = self.max_text_len + 1 # since VisionLAN predicts EOS, increaset the max_text_len by 1
+class VisionLANLabelEncode(RecCTCLabelEncode):
+    """Encode the VisionLAN labels"""
+
+    def __init__(
+        self, max_text_len, character_dict_path=None, use_space_char=False, blank_at_last=True, lower=False, **kwargs
+    ):
+        super(VisionLANLabelEncode, self).__init__(
+            max_text_len, character_dict_path, use_space_char, blank_at_last, lower
+        )
+        assert (
+            not blank_at_last
+        ), "VisionLAN applies the blank token at the beginning of the dictionary, so the blank_at_last should be False"
+        self.max_text_len = self.max_text_len + 1  # since VisionLAN predicts EOS, increaset the max_text_len by 1
+
     def __call__(self, data):
         """
         required keys:
             label -> (str) original text string
         added keys:
-            label_id -> (int), the index for the randomly chosen character to be occluded 
-            label ->(np.ndarray),  sequence of character indices for the original text string after padding to max_text_len
-            label_res-> (np.ndarray), sequence of character indices where the character is removed after padding to max_text_len 
-            label_sub-> (np.ndarray),  sequence of character indices of the occluded character after padding to max_text_len 
-            length -> (np.int32) the number of valid chars in the encoded char index sequence,  where valid means the char is in dictionary.
-            text_padded ->  text string padded to fixed length, to solved the dynamic shape issue in dataloader.
+            label_id -> (int), the index for the randomly chosen character to be occluded
+            label -> (np.ndarray),  sequence of character indices for the original text
+                                    string after padding to max_text_len
+            label_res -> (np.ndarray), sequence of character indices where the character is
+                                    removed after padding to max_text_len
+            label_sub -> (np.ndarray),  sequence of character indices of the occluded character
+                                    after padding to max_text_len
+            length -> (np.int32) the number of valid chars in the encoded char index sequence,
+                                    where valid means the char is in dictionary.
+            text_padded ->  text string padded to fixed length, to solved the dynamic shape
+                                    issue in dataloader.
         """
-        text = data['label']  # original string
+        text = data["label"]  # original string
         # 1. randomly select a character to be occluded, save its index to label_id
         len_str = len(text)
         if len_str == 0:
             raise ValueError("The length of the label string is zero")
         change_num = 1
         order = list(range(len_str))
-        label_id = sample(order, change_num)[0] # randomly select the change character index
+        label_id = sample(order, change_num)[0]  # randomly select the change character index
         # 2. obtain two strings: label_sub and label_res
         label_sub = text[label_id]
         if label_id == (len_str - 1):
@@ -174,11 +181,11 @@ class VisionLANLabelEncode(RecCTCLabelEncode):
         elif label_id == 0:
             label_res = text[1:]
         else:
-            label_res = text[:label_id] + text[label_id + 1:]
+            label_res = text[:label_id] + text[label_id + 1 :]
 
-        data['label_id'] = label_id  # character index
-        #3. encode strings (valid characters) to indices
-        char_indices = str2idx(data['label'], self.dict, max_text_len=self.max_text_len, lower=self.lower)
+        data["label_id"] = label_id  # character index
+        # 3. encode strings (valid characters) to indices
+        char_indices = str2idx(data["label"], self.dict, max_text_len=self.max_text_len, lower=self.lower)
         if char_indices is None:
             char_indices = []
         label_res = str2idx(label_res, self.dict, max_text_len=self.max_text_len, lower=self.lower)
@@ -187,17 +194,18 @@ class VisionLANLabelEncode(RecCTCLabelEncode):
             label_res = []
         if label_sub is None:
             label_sub = []
-        data['length'] = len(char_indices)
+        data["length"] = len(char_indices)
         # 4. pad to a fixed length by appending zeros (self.blank_idx)
         char_indices = char_indices + [self.blank_idx] * (self.max_text_len - len(char_indices))
-        data['text_padded'] = data['label'] + ' ' * (self.max_text_len - len(data['label']))
-        data['label'] = np.array(char_indices)
+        data["text_padded"] = data["label"] + " " * (self.max_text_len - len(data["label"]))
+        data["label"] = np.array(char_indices)
         label_res = label_res + [self.blank_idx] * (self.max_text_len - len(label_res))
         label_sub = label_sub + [self.blank_idx] * (self.max_text_len - len(label_sub))
-        data['label_res'] = np.array(label_res)
-        data['label_sub'] = np.array(label_sub)
+        data["label_res"] = np.array(label_res)
+        data["label_sub"] = np.array(label_sub)
         return data
-    
+
+
 class RecAttnLabelEncode:
     def __init__(
         self,

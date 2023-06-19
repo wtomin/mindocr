@@ -2,6 +2,7 @@ from typing import List, Optional, Type, Union
 
 import mindspore.common.initializer as init
 from mindspore import Tensor, nn
+
 from ._registry import register_backbone, register_backbone_class
 
 __all__ = ['RecResNet45', 'rec_resnet45']
@@ -118,7 +119,6 @@ class RecResNet45(nn.Cell):
     Args:
         block: block of resnet.
         layers: number of layers of each stage.
-        num_classes: number of classification classes. Default: 1000.
         in_channels: number the channels of the input. Default: 3.
         groups: number of groups for group conv in blocks. Default: 1.
         base_width: base width of pre group hidden channel in blocks. Default: 64.
@@ -130,7 +130,6 @@ class RecResNet45(nn.Cell):
         block = BasicBlock,
         layers = [3, 4, 6, 6, 3],
         strides = [2, 1, 2, 1, 1],
-        num_classes: int = 1000,
         in_channels: int = 3,
         groups: int = 1,
         base_width: int = 64,
@@ -150,7 +149,7 @@ class RecResNet45(nn.Cell):
                                stride=1, pad_mode="same")
         self.bn1 = norm(self.input_channels)
         self.relu = nn.ReLU()
-        
+
         self.layer1 = self._make_layer(block, 32, layers[0], stride = strides[0])
         self.layer2 = self._make_layer(block, 64, layers[1], stride = strides[1])
         self.layer3 = self._make_layer(block, 128, layers[2], stride = strides[2])
@@ -237,7 +236,6 @@ class RecResNet45(nn.Cell):
 
     def construct(self, x: Tensor) -> Tensor:
         x = self.forward_features(x)
-        # maxpooling?
         return [x]
 
 
