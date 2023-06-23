@@ -1,10 +1,7 @@
-from typing import List, Tuple
-
 import numpy as np
 
 import mindspore as ms
-from mindspore import Parameter, Tensor, nn, ops
-from mindspore.common import dtype as mstype
+from mindspore import Tensor, nn, ops
 from mindspore.nn.loss.loss import LossBase
 
 __all__ = ["CTCLoss", "AttentionLoss", "VisionLANLoss"]
@@ -113,9 +110,7 @@ class VisionLANLoss(LossBase):
             target_res = ops.cast(label_res, ms.int32)
             target_sub = ops.cast(label_sub, ms.int32)
             target_res = self.replace_label_with_target_value(target_res, label_length - 1)
-            target_sub = self.replace_label_with_target_value(
-                target_sub, ops.ones((len(label_length),), dtype=ms.int32)
-            )
+            target_sub = self.replace_label_with_target_value(target_sub, ops.ones((len(label_length),), ms.int32))
             loss_ori = self.criterion(
                 text_pre.view(b * l, c),
                 target.view(
