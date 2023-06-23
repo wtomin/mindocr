@@ -1,7 +1,7 @@
 import os
 import time
-from tqdm import tqdm
 from typing import List, Tuple
+
 from packaging import version
 
 import mindspore as ms
@@ -10,7 +10,7 @@ from mindspore.train.callback._callback import Callback, _handle_loss
 
 from .checkpoint import CheckpointManager
 from .evaluator import Evaluator
-from .misc import AverageMeter
+from .misc import AverageMeter, fetch_optimizer_lr
 from .recorder import PerfRecorder
 
 __all__ = ["EvalSaveCallback"]
@@ -135,29 +135,29 @@ class EvalSaveCallback(Callback):
 
         if not data_sink_mode and cur_step_in_epoch % self.log_interval == 0:
             opt = cb_params.train_network.optimizer
-            cur_lr = opt.get_lr() # lr or group lr
-            cur_lr = cur_lr.asnumpy().squeeze() if not isinstance(cur_lr, (Tuple, List)) else [lr.asnumpy().squeeze() for lr in cur_lr]
-            cur_lr = float(cur_lr) if not isinstance(cur_lr, (Tuple, List)) else [float(lr) for lr in cur_lr]
-            per_step_time = (
-                (time.time() - self.step_start_time) * 1000 / self.log_interval
+            cur_lr = fetch_optimizer_lr(opt)  # get lr or group lr without updating global step
+            cur_lr = (
+                cur_lr.asnumpy().squeeze()
+                if not isinstance(cur_lr, (Tuple, List))
+                else [lr.asnumpy().squeeze() for lr in cur_lr]
             )
+            cur_lr = float(cur_lr) if not isinstance(cur_lr, (Tuple, List)) else [float(lr) for lr in cur_lr]
+            per_step_time = (time.time() - self.step_start_time) * 1000 / self.log_interval
             fps = self.batch_size * 1000 / per_step_time
             loss = self._loss_avg_meter.val.asnumpy()
-            if not isinstance(cur_lr, List):
-                msg = (
-                    f"epoch: [{cur_epoch}/{cb_params.epoch_num+self.start_epoch}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
-                    f"loss: {loss:.6f}, lr: {cur_lr:.6f}, per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
-                )
-            else:
-                msg = (
-                    f"epoch: [{cur_epoch}/{cb_params.epoch_num+self.start_epoch}] step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
-                    f"loss: {loss:.6f},"
-                )
+            if isinstance(cur_lr, List):
                 cur_lr = set(cur_lr)
-                for i_lr, lr in enumerate(cur_lr):
-                    msg+=f"  lr_{i_lr}: {lr:.6f},"
-                msg +=f" per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
-            self.logger(msg)
+                cur_lr = cur_lr.pop()  # if group lr, get the first lr
+                lr_str = f"lr_0: {cur_lr:.6f}, "
+            else:
+                lr_str = f"lr: {cur_lr:.6f}, "
+            msg = (
+                f"epoch: [{cur_epoch}/{cb_params.epoch_num+self.start_epoch}] "
+                f"step: [{cur_step_in_epoch}/{cb_params.batch_num}], "
+                f"loss: {loss:.6f}, " + lr_str + f"per step time: {per_step_time:.3f} ms, fps: {fps:.2f} img/s"
+            )
+
+            self.logger.info(msg)
             self.step_start_time = time.time()
 
     def on_train_epoch_begin(self, run_context):
