@@ -22,9 +22,6 @@ model:
   type: rec
   transform: null
   resume: False
-  state_dict: # the initial state dict needs to be provided for LF_2 and LA
-    init_ckpt: ./tmp_visionlan/LF_2/e4.ckpt
-    strict_load: False
   backbone:
     name: rec_resnet45
     pretrained: False
@@ -37,6 +34,7 @@ model:
     n_dim: 512
     max_text_length:  *max_text_len
     training_step: *training_step
+  pretrained: ./tmp_visionlan/LF_2/e4.ckpt
 
 
 postprocess:
@@ -75,8 +73,6 @@ optimizer:
   # lr: # no need to set lr here because in train.py, the lr scheduler is passed to create_optimizer
   grouping_strategy: visionlan
   training_step: *training_step
-  #weight_decay: False
-  #filter_bias_and_bn: True # do not apply weight decay for bias and batchnorm params
 
 loss_scaler:
   type: static

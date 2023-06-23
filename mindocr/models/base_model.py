@@ -1,5 +1,3 @@
-import os
-
 from addict import Dict
 
 import mindspore as ms
@@ -52,15 +50,6 @@ class BaseModel(nn.Cell):
         self.head = build_head(head_name, in_channels=self.neck.out_channels, **config.head)
 
         self.model_name = f'{backbone_name}_{neck_name}_{head_name}'
-
-        # load state dict if provided
-        if config.state_dict.init_ckpt is not None:
-            ckpt_path = config.state_dict.init_ckpt
-            assert os.path.exists(ckpt_path), f"{ckpt_path} does not exist!"
-            ms.load_checkpoint(ckpt_path, self, config.state_dict.get('strict_load', False))
-            print(f"INFO: `{self.model_name}` loads initial checkpoint state dict from {ckpt_path}.")
-        else:
-            print(f"INFO: `{self.model_name}` loads random initial weights.")
 
     def construct(self, x, aux_input=None):
         if self.transform is not None:
