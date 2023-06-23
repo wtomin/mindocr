@@ -4,10 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-import mindspore as ms
 from mindspore import Tensor
 
+from ..utils.logger import Logger
+
 __all__ = ["RecCTCLabelDecode", "RecAttnLabelDecode", "VisionLANPostProcess"]
+_logger = Logger("mindocr")
 
 
 class RecCTCLabelDecode(object):
@@ -48,8 +50,8 @@ class RecCTCLabelDecode(object):
         if character_dict_path is None:
             char_list = [c for c in "0123456789abcdefghijklmnopqrstuvwxyz"]
             self.lower = True
-            print(
-                "INFO: `character_dict_path` for RecCTCLabelDecode is not given. "
+            _logger.info(
+                "`character_dict_path` for RecCTCLabelDecode is not given. "
                 'Default dict "0123456789abcdefghijklmnopqrstuvwxyz" is applied. Only number and English letters '
                 "(regardless of lower/upper case) will be recognized and evaluated."
             )
@@ -67,10 +69,9 @@ class RecCTCLabelDecode(object):
             self.space_idx = len(char_list) - 1
         else:
             if " " in char_list:
-                print(
-                    "WARNING: The dict still contains space char in dict although use_space_char is set to be False, "
-                    "because the space char is coded in the dictionary file ",
-                    character_dict_path,
+                _logger.warning(
+                    "The dict still contains space char in dict although use_space_char is set to be False, "
+                    f"because the space char is coded in the dictionary file {character_dict_path}"
                 )
 
         self.num_valid_chars = len(char_list)  # the number of valid chars (including space char if used)
@@ -148,9 +149,6 @@ class RecCTCLabelDecode(object):
         pred_indices = preds.argmax(axis=-1)
         pred_prob = preds.max(axis=-1)
 
-        # print('pred indices: ', pred_indices)
-        # print('pred prob: ', pred_prob.shape)
-
         # TODO: for debug only
         raw_chars = [[self.character[idx] for idx in pred_indices[b]] for b in range(pred_indices.shape[0])]
 
@@ -166,7 +164,7 @@ class VisionLANPostProcess(RecCTCLabelDecode):
         super(VisionLANPostProcess, self).__init__(character_dict_path, use_space_char, blank_at_last, lower)
         self.max_text_length = kwargs.get("max_text_length", 25)
         assert (
-            blank_at_last == False
+            not blank_at_last
         ), "VisionLAN uses blank_at_last =  False, please check your configuration for VisionLANPostProcess"
 
     def __call__(self, preds, *args, **kwargs):
@@ -253,7 +251,7 @@ class RecAttnLabelDecode:
             char_list = list("0123456789abcdefghijklmnopqrstuvwxyz")
 
             self.lower = True
-            print("INFO: The character_dict_path is None, model can only recognize number and lower letters")
+            _logger.info("The character_dict_path is None, model can only recognize number and lower letters")
         else:
             # parse char dictionary
             char_list = []
@@ -269,10 +267,9 @@ class RecAttnLabelDecode:
             self.space_idx = len(char_list) + 1
         else:
             if " " in char_list:
-                print(
-                    "WARNING: The dict still contains space char in dict although use_space_char is set to be False, "
-                    "because the space char is coded in the dictionary file ",
-                    character_dict_path,
+                _logger.warning(
+                    "The dict still contains space char in dict although use_space_char is set to be False, "
+                    f"because the space char is coded in the dictionary file {character_dict_path}"
                 )
 
         self.num_valid_chars = len(char_list)  # the number of valid chars (including space char if used)
@@ -295,15 +292,17 @@ class RecAttnLabelDecode:
         for batch_idx in range(batch_size):
             char_list = [self.character[i] for i in char_indices[batch_idx]]
 
+            try:
+                pred_EOS = char_list.index("<STOP>")
+            except ValueError:
+                pred_EOS = -1
+
             if self.lower:
                 char_list = [x.lower() for x in char_list]
 
-            text = "".join(char_list)
-
-            pred_EOS = text.find("<STOP>")
-
             if pred_EOS != -1:
-                text = text[:pred_EOS]
+                char_list = char_list[:pred_EOS]
+                text = "".join(char_list)
             else:
                 text = ""
 

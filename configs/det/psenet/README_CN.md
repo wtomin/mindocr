@@ -32,10 +32,19 @@ PSENet的整体架构图如图1所示，包含以下阶段:
 | PSENet               | D910x8-MS2.0-G | ResNet-152   | ImageNet   | 79.39%     | 84.91%        | 82.06%      | 138 s/epoch   | 7.57 img/s | [yaml](pse_r152_icdar15.yaml) | [ckpt](https://download.mindspore.cn/toolkits/mindocr/psenet/psenet_resnet152_ic15-6058a798.ckpt) \| [mindir](https://download.mindspore.cn/toolkits/mindocr/psenet/psenet_resnet152_ic15-6058a798-0d755205.mindir)
 </div>
 
+### SCUT-CTW1500
+<div align="center">
+
+| **模型**              | **环境配置**       | **骨干网络**      | **预训练数据集** | **Recall** | **Precision** | **F-score** | **训练时间**     | **吞吐量**   | **配置文件**                            | **模型权重下载**                                                                                                                                                                                                |
+|---------------------|----------------|---------------|------------|------------|---------------|-------------|--------------|-----------|-------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| PSENet               | D910x8-MS2.0-G | ResNet-152   | ImageNet   | 73.69%     | 74.38%        | 74.04%      | 67 s/epoch   | 14.33 img/s | [yaml](pse_r152_ctw1500.yaml) | [ckpt](https://download.mindspore.cn/toolkits/mindocr/psenet/psenet_resnet152_ctw1500-58b1b1ff.ckpt) \| [mindir](https://download.mindspore.cn/toolkits/mindocr/psenet/psenet_resnet152_ctw1500-58b1b1ff-b95c7f85.mindir)
+</div>
+
 #### 注释：
 - 环境配置：训练的环境配置表示为 {处理器}x{处理器数量}-{MS模式}，其中 Mindspore 模式可以是 G-graph 模式或 F-pynative 模式。
 - PSENet的训练时长受数据处理部分超参和不同运行环境的影响非常大。
-- 链接中MindIR导出时的输入Shape为`(1,3,1472,2624)` 。
+- 在ICDAR15数据集上，MindIR导出时的输入Shape为`(1,3,1472,2624)` 。
+- 在SCUT-CTW1500数据集上，MindIR导出时的输入Shape为`(1,3,1024,1024)` 。
 
 ## 3. 快速上手
 
@@ -65,6 +74,26 @@ PSENet的整体架构图如图1所示，包含以下阶段:
     │   ├── img_2.jpg
     │   └── ....jpg
     └── train_det_gt.txt
+```
+
+#### 3.2.2 SCUT-CTW1500 数据集
+
+请从[该网址](https://github.com/Yuliang-Liu/Curve-Text-Detector)下载SCUT-CTW1500数据集，然后参考[数据转换](https://github.com/mindspore-lab/mindocr/blob/main/tools/dataset_converters/README_CN.md)对数据集标注进行格式转换。
+
+完成数据准备工作后，数据的目录结构应该如下所示：
+
+```txt
+ctw1500
+ ├── test_images
+ │   ├── 1001.jpg
+ │   ├── 1002.jpg
+ │   ├── ...
+ ├── train_images
+ │   ├── 0001.jpg
+ │   ├── 0002.jpg
+ │   ├── ...
+ ├── test_det_gt.txt
+ ├── train_det_gt.txt
 ```
 
 ### 3.3 配置说明
@@ -153,7 +182,7 @@ python tools/eval.py --config configs/det/psenet/pse_r152_icdar15.yaml
 
 ### 3.6 MindSpore Lite 推理
 
-请参考[MindOCR 推理](../../../docs/cn/inference/inference_tutorial_cn.md)教程，基于MindSpore Lite在Ascend 310上进行模型的推理，包括以下步骤：
+请参考[MindOCR 推理](../../../docs/cn/inference/inference_tutorial.md)教程，基于MindSpore Lite在Ascend 310上进行模型的推理，包括以下步骤：
 
 - 模型导出
 
@@ -169,11 +198,11 @@ python tools/export.py --model_name configs/det/psenet/pse_r152_icdar15.yaml --d
 
 - 环境搭建
 
-请参考[环境安装](../../../docs/cn/inference/environment_cn.md#2-mindspore-lite推理)教程，配置MindSpore Lite推理运行环境。
+请参考[环境安装](../../../docs/cn/inference/environment.md#2-mindspore-lite推理)教程，配置MindSpore Lite推理运行环境。
 
 - 模型转换
 
-请参考[模型转换](../../../docs/cn/inference/convert_tutorial_cn.md#1-mindocr模型)教程，使用`converter_lite`工具对MindIR模型进行离线转换，
+请参考[模型转换](../../../docs/cn/inference/convert_tutorial.md#1-mindocr模型)教程，使用`converter_lite`工具对MindIR模型进行离线转换，
 其中`configFile`文件中的`input_shape`需要填写模型导出时shape，如上述的(1,3,1472,2624)，格式为NCHW。
 
 - 执行推理
@@ -188,7 +217,7 @@ python infer.py \
     --device=Ascend \
     --device_id=0 \
     --det_model_path=your_path_to/output.mindir \
-    --det_config_path=../../configs/det/psenet/pse_r152_icdar15.yaml \
+    --det_model_name_or_config=../../configs/det/psenet/pse_r152_icdar15.yaml \
     --backend=lite \
     --res_save_dir=results_dir
 ```

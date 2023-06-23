@@ -1,12 +1,18 @@
-import inspect
-from .det_loss import L1BalancedCELoss, PSEDiceLoss, EASTLoss
-from .rec_loss import CTCLoss, AttentionLoss, VisionLANLoss
+__all__ = ["build_loss"]
+
+supported_losses = [
+    "L1BalancedCELoss",
+    "CTCLoss",
+    "AttentionLoss",
+    "PSEDiceLoss",
+    "EASTLoss",
+    "CrossEntropySmooth",
+    "FCELoss",
+    "VisionLANLoss",
+]
 from .cls_loss import CrossEntropySmooth
-
-__all__ = ['build_loss']
-
-supported_losses = ["L1BalancedCELoss", "CTCLoss", "AttentionLoss", "PSEDiceLoss", "EASTLoss", "CrossEntropySmooth", "VisionLANLoss"]
-
+from .det_loss import EASTLoss, FCELoss, L1BalancedCELoss, PSEDiceLoss
+from .rec_loss import AttentionLoss, CTCLoss, VisionLANLoss
 
 
 def build_loss(name, **kwargs):
