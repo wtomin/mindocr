@@ -1,7 +1,10 @@
-from addict import Dict
 import os
-from mindspore import nn
+
+from addict import Dict
+
 import mindspore as ms
+from mindspore import nn
+
 from .backbones import build_backbone
 from .heads import build_head
 from .necks import build_neck
@@ -50,12 +53,14 @@ class BaseModel(nn.Cell):
 
         self.model_name = f'{backbone_name}_{neck_name}_{head_name}'
 
-        #load state dict if provided
+        # load state dict if provided
         if config.state_dict.init_ckpt is not None:
             ckpt_path = config.state_dict.init_ckpt
             assert os.path.exists(ckpt_path), f"{ckpt_path} does not exist!"
             ms.load_checkpoint(ckpt_path, self, config.state_dict.get('strict_load', False))
-            print(f"{self.model_name} load checkpoint state dict from {ckpt_path}.")
+            print(f"INFO: `{self.model_name}` loads initial checkpoint state dict from {ckpt_path}.")
+        else:
+            print(f"INFO: `{self.model_name}` loads random initial weights.")
 
     def construct(self, x, aux_input=None):
         if self.transform is not None:
@@ -100,8 +105,6 @@ if __name__ == '__main__':
     import time
 
     import numpy as np
-
-    import mindspore as ms
 
     bs = 8
     x = ms.Tensor(np.random.rand(bs, 3, 640, 640), dtype=ms.float32)
