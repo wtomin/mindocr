@@ -85,9 +85,10 @@ class VisionLANLoss(LossBase):
         # 1. update the invalid characters except for the first invalid character to the target value
         # 2. if some samples' lengths equal to max_len, then the tensor would not be updated
         indices = label_length[:, None]
-        nonzero_mask = target != 0
-        updates = ops.ones(indices.shape, dtype=nonzero_mask.dtype)
+        nonzero_mask = ops.cast(target != 0, ms.float32)
+        updates = ops.ones(indices.shape, nonzero_mask.dtype)
         nonzero_mask = ops.tensor_scatter_elements(nonzero_mask, indices, updates, axis=1)
+        nonzero_mask = ops.cast(nonzero_mask, ms.bool_)
         target[~nonzero_mask] = target_value
         return target
 
