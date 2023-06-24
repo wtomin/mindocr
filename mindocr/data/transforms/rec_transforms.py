@@ -312,7 +312,7 @@ def str2idx(text: str, label_dict: Dict[str, int], max_text_len: int = 23, lower
             continue
         char_indices.append(label_dict[char])
     if len(char_indices) == 0:
-        _logger.warning("{} doesnot contain any valid char in the dict".format(text))
+        # _logger.warning("{} doesnot contain any valid char in the dict".format(text))
         return None
 
     return char_indices
