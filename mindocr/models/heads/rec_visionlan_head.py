@@ -26,7 +26,6 @@ class PositionalEncoding(nn.Cell):
 
 
 class ScaledDotProductAttention(nn.Cell):
-    ''' Scaled Dot-Product Attention '''
     def __init__(self, temperature: float, attn_dropout: float = 0.1):
         super().__init__()
         self.temperature = temperature
@@ -47,7 +46,6 @@ class ScaledDotProductAttention(nn.Cell):
 
 
 class PositionwiseFeedForward(nn.Cell):
-    ''' A two-feed-layer module '''
     def __init__(self, d_in: int, d_hid: int, dropout: float = 0.1):
         super().__init__()
         self.w_1 = nn.Conv1d(d_in, d_hid, kernel_size=1)  # position-wise
@@ -67,7 +65,6 @@ class PositionwiseFeedForward(nn.Cell):
 
 
 class MultiHeadAttention(nn.Cell):
-    ''' Multi-Head Attention module '''
     def __init__(self, n_head: int, d_model: int, d_k: int, d_v: int, dropout: float = 0.1):
         super().__init__()
         self.n_head = n_head
@@ -111,7 +108,6 @@ class MultiHeadAttention(nn.Cell):
 
 
 class EncoderLayer(nn.Cell):
-    ''' Compose with two layers '''
     def __init__(self, d_model: int, d_inner: int, n_head: int, d_k: int, d_v: int, dropout=0.1):
         super().__init__()
         self.self_attn = MultiHeadAttention(n_head, d_model, d_k, d_v, dropout=dropout)
@@ -208,9 +204,13 @@ class Prediction(nn.Cell):
 
 
 class MLM(nn.Cell):
-    '''
-    Architecture of MLM
-    '''
+    """Masked Language-aware Module (MLM)
+
+    Args:
+        n_dim: the dimension of the feature. Default is 512.
+        n_position: the number of position embeddings. Default is 256.
+        max_text_length: the maximum length of the text. Default is 25.
+    """
     def __init__(self, n_dim: int = 512, n_position: int = 256, max_text_length: int = 25):
         super().__init__()
         self.MLM_SequenceModeling_mask = TransformerEncoder(n_layers=2, n_position=n_position)
@@ -251,19 +251,17 @@ def trans_1d_2d(x):
 
 
 class MLM_VRM(nn.Cell):
-    """
-    MLM+VRM, MLM is only used in training.
-    ratio controls the occluded number in a batch.
-    The pipeline of VisionLAN in testing is very concise with only a backbone + \
+    """Masked Language-aware Module (MLM) and Visual Reasonin Module (VRM)
+       MLM is only used in training.
+       The pipeline of VisionLAN in testing is very concise with only a backbone + \
              sequence modeling(transformer unit) + prediction layer(pp layer).
-    x: input image
-    label_pos: character index
-    training_step: LF or LA process
-    output
-    text_pre: prediction of VRM
-    test_rem: prediction of remaining string in MLM
-    text_mas: prediction of occluded character in MLM
-    mask_c_show: visualization of Mask_c
+    Args:
+        n_layers: the number of transformer layers. Default is 3.
+        n_position: the number of position embeddings. Default is 256.
+        n_dim: the dimension of the feature. Default is 512.
+        max_text_length: the maximum length of the text. Default is 25.
+        nclass: the number of character classes. Default is 37, including 0-9, a-z \
+            characters, and one padding character.
     """
     def __init__(self,
                  n_layers: int = 3,
@@ -280,8 +278,21 @@ class MLM_VRM(nn.Cell):
                                      N_max_character=max_text_length+1, n_class=nclass)
         self.nclass = nclass
 
-
     def construct(self, input, label_pos, training_stp, is_train=False):
+        """
+        Args:
+            input: input image
+            label_pos: the index of the occluded character
+            training_stp: LF_1, LF_2, or LA process
+            is_train: if is_train is True, the pipeline of VisionLAN depends on the training step.
+                 if is_train is False, the pipeline of VisionLAN in testing is very concise with \
+                 only a backbone + sequence modeling(transformer unit) + prediction layer(pp layer).
+        Outputs:
+            text_pre: prediction of VRM
+            test_rem: prediction of remaining string in MLM
+            text_mas: prediction of occluded character in MLM
+            mask_c_show: visualization of Mask_c
+        """
         b, c, h, w = input.shape
 
         input = input.transpose((0, 1, 3, 2))  # (b, c, w, h)

@@ -188,8 +188,8 @@ class VisionLANLabelEncode(RecCTCLabelEncode):
         char_indices = str2idx(data["label"], self.dict, max_text_len=self.max_text_len, lower=self.lower)
         if char_indices is None:
             char_indices = []
-        label_res = str2idx(label_res, self.dict, max_text_len=self.max_text_len, lower=self.lower)
-        label_sub = str2idx(label_sub, self.dict, max_text_len=self.max_text_len, lower=self.lower)
+        label_res = str2idx(label_res, self.dict, max_text_len=self.max_text_len, lower=self.lower, ignore_warning=True)
+        label_sub = str2idx(label_sub, self.dict, max_text_len=self.max_text_len, lower=self.lower, ignore_warning=True)
         if label_res is None:
             label_res = []
         if label_sub is None:
@@ -292,7 +292,9 @@ class RecAttnLabelEncode:
         return data
 
 
-def str2idx(text: str, label_dict: Dict[str, int], max_text_len: int = 23, lower: bool = False) -> List[int]:
+def str2idx(
+    text: str, label_dict: Dict[str, int], max_text_len: int = 23, lower: bool = False, ignore_warning: bool = False
+) -> List[int]:
     """
     Encode text (string) to a squence of char indices
     Args:
@@ -311,8 +313,8 @@ def str2idx(text: str, label_dict: Dict[str, int], max_text_len: int = 23, lower
         if char not in label_dict:
             continue
         char_indices.append(label_dict[char])
-    if len(char_indices) == 0:
-        # _logger.warning("{} doesnot contain any valid char in the dict".format(text))
+    if len(char_indices) == 0 and not ignore_warning:
+        _logger.warning("{} doesnot contain any valid char in the dict".format(text))
         return None
 
     return char_indices
